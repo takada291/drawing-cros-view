@@ -3,13 +3,13 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>横断面図 (drawing-cros-view)</title>
+    <title>横断面図</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
     <style>
-        body { background-color: #f3f4f6; display: flex; flex-direction: column; height: 100vh; margin: 0; }
-        /* A4横の比率 (297:210) */
+        body { background-color: #f3f4f6; display: flex; flex-direction: column; height: 100vh; margin: 0; user-select: none; }
+        /* A4横の比率 (297:210) = 1122px : 793px */
         #canvas-container { 
             background: white; 
             aspect-ratio: 297 / 210; 
@@ -19,51 +19,77 @@
             position: relative;
             box-shadow: 0 4px 6px rgba(0,0,0,0.1);
             cursor: crosshair;
+            overflow: hidden;
         }
         canvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%; }
-        .toolbar { background: #1f2937; color: white; padding: 10px; display: flex; gap: 10px; flex-wrap: wrap; align-items: center; justify-content: center;}
+        .toolbar { background: #1f2937; color: white; padding: 10px; display: flex; gap: 10px; flex-wrap: wrap; align-items: center; justify-content: center; z-index: 20;}
         .btn { padding: 5px 15px; border-radius: 4px; background: #374151; cursor: pointer; border: 1px solid #4b5563; font-size: 14px;}
         .btn:hover { background: #4b5563; }
         .btn.active { background: #3b82f6; border-color: #2563eb; }
-        input[type="number"], select { color: black; padding: 4px; border-radius: 4px; }
-        #info-bar { background: #e5e7eb; padding: 5px 10px; font-size: 14px; text-align: center; }
+        input[type="number"], select { color: black !important; padding: 4px; border-radius: 4px; }
+        select option { color: black; background: white; }
+        #info-bar { background: #e5e7eb; padding: 5px 10px; font-size: 14px; text-align: center; font-weight: bold; }
+        
+        /* 凡例テーブル */
+        .legend-table th { background: #f3f4f6; border: 1px solid #000; padding: 2px 4px; font-weight: normal; font-size: 12px; width: 60px;}
+        .legend-table td { border: 1px solid #000; padding: 0; }
+        .legend-table input { width: 100%; height: 100%; border: none; outline: none; text-align: center; font-size: 12px; background: transparent; color: black; }
     </style>
 </head>
 <body>
 
     <!-- 上部メニュー -->
     <div class="toolbar">
-        <h1 class="text-xl font-bold mr-4">横断面図</h1>
+        <h1 class="text-xl font-bold mr-4">横断面図v0.1 <span class="text-sm font-normal">(A4横)</span></h1>
         <label>縮尺 1/</label>
         <input type="number" id="scale-input" value="100" class="w-20" onchange="updateScale()">
         
+        <button class="btn ml-4" onclick="undo()">↶ UNDO(戻る)</button>
+        <button class="btn bg-red-600 hover:bg-red-700 ml-2" onclick="clearCanvas()">全消去</button>
+        
+        <div class="flex-grow"></div>
+
         <button class="btn" onclick="exportPDF()">PDF出力</button>
         <button class="btn" onclick="exportDXF()">DXF保存</button>
         <input type="file" id="dxf-import" accept=".dxf" style="display: none;" onchange="importDXF(event)">
         <button class="btn" onclick="document.getElementById('dxf-import').click()">DXF読込</button>
-        <button class="btn bg-red-600 hover:bg-red-700 ml-auto" onclick="clearCanvas()">全消去</button>
     </div>
 
     <!-- キャンバスエリア -->
-    <div class="flex-grow overflow-auto p-4 flex justify-center items-center">
+    <div class="flex-grow overflow-auto p-4 flex justify-center items-center" id="main-area">
         <div id="canvas-container">
             <canvas id="gridLayer"></canvas>
             <canvas id="drawingLayer"></canvas>
             <canvas id="uiLayer"></canvas>
+
+            <!-- 右下凡例とスケールバー -->
+            <div id="legend-box" class="absolute bottom-4 right-4 bg-white border-2 border-black p-2 z-10 flex flex-col" style="width: 220px;">
+                <table class="legend-table w-full border-collapse text-center mb-2">
+                    <tr><th>路線名</th><td><input type="text" value="林道 〇〇線"></td></tr>
+                    <tr><th>施工箇所</th><td><input type="text" value="〇〇市〇〇町 地内"></td></tr>
+                    <tr><th>測点</th><td><input type="text" value="NO.0"></td></tr>
+                    <tr><th>縮尺</th><td id="legend-scale-text" class="text-xs font-bold py-1">S = 1/100</td></tr>
+                </table>
+                <!-- スケールバー -->
+                <div class="flex flex-col items-center">
+                    <div id="scale-bar-text" class="text-xs leading-none">1m</div>
+                    <div id="scale-bar-line" class="border-b-2 border-l-2 border-r-2 border-black mt-1" style="height: 6px; width: 37.77px;"></div>
+                </div>
+            </div>
         </div>
     </div>
 
     <!-- 情報表示バー -->
-    <div id="info-bar">
-        計測結果やステータスがここに表示されます
-    </div>
+    <div id="info-bar">描画モードを選択してください（Shiftキーを押しながら描画で水平・垂直になります）</div>
 
     <!-- 下部描画ツール -->
     <div class="toolbar">
         <button class="btn active" id="mode-select" onclick="setMode('select')">選択/移動</button>
-        <button class="btn" id="mode-solid" onclick="setMode('solid')">実線描画</button>
-        <button class="btn" id="mode-dashed" onclick="setMode('dashed')">破線描画</button>
+        <button class="btn" id="mode-solid" onclick="setMode('solid')">実線</button>
+        <button class="btn" id="mode-dashed" onclick="setMode('dashed')">破線</button>
+        <button class="btn" id="mode-text" onclick="setMode('text')">テキスト挿入</button>
         <button class="btn" id="mode-measure" onclick="setMode('measure')">距離計測</button>
+        <button class="btn" id="mode-area" onclick="setMode('area')">面積計測</button>
         
         <label class="ml-4">勾配指定:</label>
         <select id="slope-select" onchange="updateSlope()">
@@ -76,7 +102,7 @@
             <option value="1.5">1割5分 (1:1.5)</option>
         </select>
         
-        <label class="ml-4"><input type="checkbox" id="snap-toggle" checked> スナップフィット(端点)</label>
+        <label class="ml-4"><input type="checkbox" id="snap-toggle" checked> スナップ(端点)</label>
     </div>
 
     <script>
@@ -87,24 +113,47 @@
         const uiCtx = uiCanvas.getContext('2d');
         const infoBar = document.getElementById('info-bar');
 
+        const CANVAS_WIDTH = 1122;
+        const CANVAS_HEIGHT = 793;
+        const PIXELS_PER_MM = CANVAS_WIDTH / 297; // A4幅297mmに基づく変換率
+
         let lines = [];
-        let currentMode = 'select'; // 'select', 'solid', 'dashed', 'measure'
+        let texts = []; // {text, x, y}
+        let history = []; // Undo用履歴
+        
+        let currentMode = 'select'; // 'select', 'solid', 'dashed', 'measure', 'area', 'text'
         let isDrawing = false;
         let startPoint = null;
-        let currentPoint = null;
         let scale = 100;
         let selectedSlope = 'free';
         let snappedPoint = null;
+        
+        let areaPoints = []; // 面積計測用の頂点配列
 
-        // 実際の解像度を設定
+        function saveState() {
+            history.push(JSON.stringify({ lines, texts }));
+            if (history.length > 30) history.shift(); // 履歴は30件まで
+        }
+
+        function undo() {
+            if (history.length > 0) {
+                const state = JSON.parse(history.pop());
+                lines = state.lines;
+                texts = state.texts;
+                redrawAll();
+                infoBar.innerText = "1つ前の状態に戻しました";
+            } else {
+                infoBar.innerText = "これ以上戻せません";
+            }
+        }
+
         function resizeCanvases() {
-            const width = 1122;
-            const height = 793;
             [drawCanvas, uiCanvas, document.getElementById('gridLayer')].forEach(c => {
-                c.width = width;
-                c.height = height;
+                c.width = CANVAS_WIDTH;
+                c.height = CANVAS_HEIGHT;
             });
             redrawAll();
+            updateScaleBar();
         }
         window.addEventListener('resize', resizeCanvases);
         resizeCanvases();
@@ -113,11 +162,34 @@
             currentMode = mode;
             document.querySelectorAll('.toolbar .btn').forEach(b => b.classList.remove('active'));
             document.getElementById('mode-' + mode).classList.add('active');
-            infoBar.innerText = mode === 'measure' ? "始点と終点をクリックして長さを計測します" : "描画モードを変更しました";
+            
+            areaPoints = []; // モード切替時に計測をリセット
+            uiCtx.clearRect(0, 0, uiCanvas.width, uiCanvas.height);
+            
+            const msgs = {
+                'solid': '始点から終点へドラッグ（Shiftキーで水平/垂直）',
+                'dashed': '始点から終点へドラッグ（Shiftキーで水平/垂直）',
+                'measure': '2点をクリックして距離を計測',
+                'area': '頂点を順番にクリックし、右クリックで面積を確定・テキスト配置',
+                'text': 'キャンバス上をクリックしてテキスト（寸法等）を挿入',
+                'select': '描画モードを変更しました'
+            };
+            infoBar.innerText = msgs[mode] || "";
         }
 
         function updateScale() {
             scale = parseFloat(document.getElementById('scale-input').value) || 100;
+            document.getElementById('legend-scale-text').innerText = `S = 1/${scale}`;
+            updateScaleBar();
+        }
+
+        function updateScaleBar() {
+            // スケールバーの長さを計算 (例: 1mの長さ)
+            const realMeters = 1;
+            const mmOnPaper = (realMeters * 1000) / scale;
+            const pxWidth = mmOnPaper * PIXELS_PER_MM;
+            document.getElementById('scale-bar-line').style.width = pxWidth + 'px';
+            document.getElementById('scale-bar-text').innerText = `${realMeters}m`;
         }
 
         function updateSlope() {
@@ -126,12 +198,14 @@
 
         function clearCanvas() {
             if(confirm('全ての描画を消去しますか？')) {
+                saveState();
                 lines = [];
+                texts = [];
+                areaPoints = [];
                 redrawAll();
             }
         }
 
-        // キャンバス上の座標を取得
         function getMousePos(e) {
             const rect = uiCanvas.getBoundingClientRect();
             const scaleX = uiCanvas.width / rect.width;
@@ -142,9 +216,8 @@
             };
         }
 
-        // スナップ判定（端点に近づいたら吸い付く）
         function checkSnap(pos) {
-            const snapDist = 20; // スナップ半径
+            const snapDist = 20; 
             let closest = null;
             let minDist = snapDist;
 
@@ -158,28 +231,48 @@
                         }
                     }
                 }
+                // 面積計測中の頂点にもスナップ
+                for (let pt of areaPoints) {
+                    let d = Math.hypot(pt.x - pos.x, pt.y - pos.y);
+                    if (d < minDist) {
+                        minDist = d;
+                        closest = { x: pt.x, y: pt.y };
+                    }
+                }
             }
             return closest;
         }
 
-        // 勾配計算 (V:H = 1:X とする)
-        function applySlope(start, end) {
-            if (selectedSlope === 'free') return end;
-            const H = parseFloat(selectedSlope);
-            const V = 1.0;
-            const dx = end.x - start.x;
-            const dy = end.y - start.y;
+        function applyConstraints(start, end, e) {
+            let res = { x: end.x, y: end.y };
             
-            // マウスの向き（上下左右）に合わせて一番近い勾配方向に補正
-            const signX = dx >= 0 ? 1 : -1;
-            const signY = dy >= 0 ? 1 : -1;
-            
-            // 水平ベースか鉛直ベースかで近い方を採用（簡易版）
-            const newDx = Math.abs(dy) * H * signX;
-            return { x: start.x + newDx, y: end.y };
+            // Shiftキーで水平・垂直強制
+            if (e.shiftKey) {
+                const dx = Math.abs(end.x - start.x);
+                const dy = Math.abs(end.y - start.y);
+                if (dx > dy) {
+                    res.y = start.y;
+                } else {
+                    res.x = start.x;
+                }
+                return res;
+            }
+
+            // 勾配指定
+            if (selectedSlope !== 'free') {
+                const H = parseFloat(selectedSlope);
+                const dx = end.x - start.x;
+                const dy = end.y - start.y;
+                const signX = dx >= 0 ? 1 : -1;
+                const newDx = Math.abs(dy) * H * signX;
+                res = { x: start.x + newDx, y: end.y };
+            }
+            return res;
         }
 
         uiCanvas.addEventListener('mousedown', (e) => {
+            if (e.button === 2) return; // 右クリックは無視
+            
             const pos = getMousePos(e);
             const effectivePos = snappedPoint || pos;
 
@@ -189,14 +282,25 @@
             } else if (currentMode === 'measure') {
                 if (!startPoint) {
                     startPoint = effectivePos;
-                    infoBar.innerText = "終点をクリックしてください";
+                    infoBar.innerText = "終点をクリックしてください（Shiftキーで水平/垂直計測）";
                 } else {
-                    const distPix = Math.hypot(effectivePos.x - startPoint.x, effectivePos.y - startPoint.y);
-                    // 縮尺を考慮した実際の距離（m換算：1px = 1mmとして計算）
-                    const distMeters = (distPix / 1000) * scale;
-                    infoBar.innerText = `距離: ${distMeters.toFixed(2)} m (縮尺 1/${scale})`;
+                    let endPos = applyConstraints(startPoint, effectivePos, e);
+                    const distPix = Math.hypot(endPos.x - startPoint.x, endPos.y - startPoint.y);
+                    const distMeters = (distPix / PIXELS_PER_MM) * (scale / 1000);
+                    infoBar.innerText = `距離: ${distMeters.toFixed(2)} m`;
                     startPoint = null;
+                    uiCtx.clearRect(0, 0, uiCanvas.width, uiCanvas.height);
                 }
+            } else if (currentMode === 'text') {
+                const t = prompt('挿入するテキストを入力してください（寸法など）:');
+                if (t) {
+                    saveState();
+                    texts.push({ text: t, x: pos.x, y: pos.y });
+                    redrawAll();
+                }
+            } else if (currentMode === 'area') {
+                areaPoints.push(effectivePos);
+                drawAreaPreview(pos);
             }
         });
 
@@ -207,7 +311,7 @@
 
             uiCtx.clearRect(0, 0, uiCanvas.width, uiCanvas.height);
 
-            // スナップポイントの描画（緑色の丸）
+            // スナップマーカー表示
             if (snappedPoint) {
                 uiCtx.beginPath();
                 uiCtx.arc(snappedPoint.x, snappedPoint.y, 6, 0, Math.PI * 2);
@@ -216,41 +320,40 @@
             }
 
             if (isDrawing && startPoint) {
-                let endPos = effectivePos;
-                if (!snappedPoint) {
-                    endPos = applySlope(startPoint, effectivePos);
-                }
+                let endPos = snappedPoint ? snappedPoint : applyConstraints(startPoint, effectivePos, e);
 
                 uiCtx.beginPath();
                 uiCtx.moveTo(startPoint.x, startPoint.y);
                 uiCtx.lineTo(endPos.x, endPos.y);
-                if (currentMode === 'dashed') {
-                    uiCtx.setLineDash([10, 10]);
-                } else {
-                    uiCtx.setLineDash([]);
-                }
-                uiCtx.strokeStyle = '#ef4444'; // 作図中の赤線
+                uiCtx.setLineDash(currentMode === 'dashed' ? [10, 10] : []);
+                uiCtx.strokeStyle = '#ef4444';
                 uiCtx.lineWidth = 2;
                 uiCtx.stroke();
+            } else if (currentMode === 'measure' && startPoint) {
+                let endPos = applyConstraints(startPoint, effectivePos, e);
+                uiCtx.beginPath();
+                uiCtx.moveTo(startPoint.x, startPoint.y);
+                uiCtx.lineTo(endPos.x, endPos.y);
+                uiCtx.setLineDash([5, 5]);
+                uiCtx.strokeStyle = '#3b82f6';
+                uiCtx.lineWidth = 1;
+                uiCtx.stroke();
+            } else if (currentMode === 'area' && areaPoints.length > 0) {
+                drawAreaPreview(effectivePos);
             }
         });
 
         uiCanvas.addEventListener('mouseup', (e) => {
+            if (e.button === 2) return;
+
             if (isDrawing && startPoint) {
                 const pos = getMousePos(e);
                 const effectivePos = snappedPoint || pos;
-                let endPos = effectivePos;
-                if (!snappedPoint) {
-                    endPos = applySlope(startPoint, effectivePos);
-                }
+                let endPos = snappedPoint ? snappedPoint : applyConstraints(startPoint, effectivePos, e);
 
-                // 微小な線は無視
                 if (Math.hypot(endPos.x - startPoint.x, endPos.y - startPoint.y) > 2) {
-                    lines.push({
-                        start: startPoint,
-                        end: endPos,
-                        type: currentMode
-                    });
+                    saveState();
+                    lines.push({ start: startPoint, end: endPos, type: currentMode });
                 }
                 isDrawing = false;
                 startPoint = null;
@@ -259,8 +362,63 @@
             }
         });
 
+        // 面積計測の確定（右クリック）
+        uiCanvas.addEventListener('contextmenu', (e) => {
+            e.preventDefault();
+            if (currentMode === 'area' && areaPoints.length >= 3) {
+                let areaPx = 0;
+                let cx = 0, cy = 0;
+                
+                // 多角形の面積計算 (Shoelace formula) と 重心の簡易計算
+                for(let i = 0; i < areaPoints.length; i++) {
+                    let j = (i + 1) % areaPoints.length;
+                    areaPx += (areaPoints[i].x * areaPoints[j].y) - (areaPoints[j].x * areaPoints[i].y);
+                    cx += areaPoints[i].x;
+                    cy += areaPoints[i].y;
+                }
+                areaPx = Math.abs(areaPx) / 2.0;
+                cx /= areaPoints.length;
+                cy /= areaPoints.length;
+
+                // 面積を平方メートルに変換
+                const areaSqMm = areaPx / (PIXELS_PER_MM * PIXELS_PER_MM);
+                const areaSqMeters = areaSqMm * (scale / 1000) * (scale / 1000);
+                
+                const areaText = `A=${areaSqMeters.toFixed(2)}m2`;
+                infoBar.innerText = `面積: ${areaSqMeters.toFixed(2)} m2 （図面上に配置しました）`;
+                
+                saveState();
+                texts.push({ text: areaText, x: cx, y: cy });
+                
+                areaPoints = []; // リセット
+                redrawAll();
+                uiCtx.clearRect(0, 0, uiCanvas.width, uiCanvas.height);
+            } else if (currentMode === 'area') {
+                infoBar.innerText = "面積を計算するには3点以上クリックしてください";
+            }
+        });
+
+        function drawAreaPreview(currentMousePos) {
+            if(areaPoints.length === 0) return;
+            uiCtx.beginPath();
+            uiCtx.moveTo(areaPoints[0].x, areaPoints[0].y);
+            for(let i = 1; i < areaPoints.length; i++) {
+                uiCtx.lineTo(areaPoints[i].x, areaPoints[i].y);
+            }
+            uiCtx.lineTo(currentMousePos.x, currentMousePos.y);
+            uiCtx.lineTo(areaPoints[0].x, areaPoints[0].y);
+            uiCtx.fillStyle = 'rgba(59, 130, 246, 0.2)'; // 薄い青色
+            uiCtx.fill();
+            uiCtx.strokeStyle = '#3b82f6';
+            uiCtx.setLineDash([5, 5]);
+            uiCtx.stroke();
+            uiCtx.setLineDash([]);
+        }
+
         function redrawAll() {
             drawCtx.clearRect(0, 0, drawCanvas.width, drawCanvas.height);
+            
+            // 線分の描画
             lines.forEach(line => {
                 drawCtx.beginPath();
                 drawCtx.moveTo(line.start.x, line.start.y);
@@ -270,11 +428,22 @@
                 drawCtx.lineWidth = 2;
                 drawCtx.stroke();
             });
+
+            // テキストの描画
+            drawCtx.font = "16px sans-serif";
+            drawCtx.fillStyle = "#000000";
+            drawCtx.textAlign = "center";
+            drawCtx.textBaseline = "middle";
+            texts.forEach(t => {
+                drawCtx.fillText(t.text, t.x, t.y);
+            });
         }
 
-        // PDF出力 (html2canvas + jsPDF)
+        // PDF出力
         window.jsPDF = window.jspdf.jsPDF;
         async function exportPDF() {
+            // PDF出力時はUIレイヤーのガイド線を消去
+            uiCtx.clearRect(0, 0, uiCanvas.width, uiCanvas.height);
             const canvasEl = document.getElementById('canvas-container');
             const canvas = await html2canvas(canvasEl, { scale: 2 });
             const imgData = canvas.toDataURL('image/png');
@@ -283,15 +452,18 @@
             pdf.save('横断面図.pdf');
         }
 
-        // 簡易DXF出力
+        // DXF出力 (テキスト保存対応)
         function exportDXF() {
             let dxf = `0\nSECTION\n2\nENTITIES\n`;
             lines.forEach(line => {
-                // 画面のY座標は下向き正、DXFは上向き正なので反転
                 const y1 = -line.start.y;
                 const y2 = -line.end.y;
                 const lineType = line.type === 'dashed' ? 'DASHED' : 'CONTINUOUS';
                 dxf += `0\nLINE\n8\n0\n6\n${lineType}\n10\n${line.start.x}\n20\n${y1}\n30\n0.0\n11\n${line.end.x}\n21\n${y2}\n31\n0.0\n`;
+            });
+            texts.forEach(t => {
+                // DXF上のテキスト高さを適当に14に設定
+                dxf += `0\nTEXT\n8\n0\n10\n${t.x}\n20\n${-t.y}\n40\n14\n1\n${t.text}\n`;
             });
             dxf += `0\nENDSEC\n0\nEOF\n`;
             
@@ -302,7 +474,7 @@
             link.click();
         }
 
-        // 簡易DXF読込
+        // DXF読込 (バグ修正版 ＋ テキスト読込対応)
         function importDXF(event) {
             const file = event.target.files[0];
             if (!file) return;
@@ -312,32 +484,51 @@
                 const linesArr = text.split(/\r?\n/);
                 let currentEntity = null;
                 
-                for(let i=0; i<linesArr.length; i++) {
+                saveState(); // 読み込み前にUndo履歴保存
+
+                for(let i=0; i<linesArr.length; i+=2) {
                     const code = linesArr[i].trim();
                     const value = linesArr[i+1] ? linesArr[i+1].trim() : '';
                     
-                    if (code === '0' && value === 'LINE') {
-                        currentEntity = { start:{}, end:{}, type: 'solid' };
-                    } else if (currentEntity) {
-                        if (code === '10') currentEntity.start.x = parseFloat(value);
-                        if (code === '20') currentEntity.start.y = -parseFloat(value); // Y座標戻す
-                        if (code === '11') currentEntity.end.x = parseFloat(value);
-                        if (code === '21') currentEntity.end.y = -parseFloat(value);
-                        if (code === '6' && value.includes('DASH')) currentEntity.type = 'dashed';
-                        if (code === '0') {
-                            if(currentEntity.start.x !== undefined && currentEntity.end.x !== undefined) {
+                    if (code === '0') {
+                        // 次のエンティティが来たので、今のエンティティを配列に保存
+                        if (currentEntity) {
+                            if (currentEntity.type === 'text' && currentEntity.text) {
+                                texts.push({ text: currentEntity.text, x: currentEntity.x, y: currentEntity.y });
+                            } else if (currentEntity.start && currentEntity.start.x !== undefined && currentEntity.end.x !== undefined) {
                                 lines.push(currentEntity);
                             }
                             currentEntity = null;
                         }
+                        
+                        // 新しいエンティティの開始
+                        if (value === 'LINE') {
+                            currentEntity = { start:{}, end:{}, type: 'solid' };
+                        } else if (value === 'TEXT') {
+                            currentEntity = { type: 'text' };
+                        }
+                    } else if (currentEntity) {
+                        if (currentEntity.type === 'text') {
+                            if (code === '10') currentEntity.x = parseFloat(value);
+                            if (code === '20') currentEntity.y = -parseFloat(value);
+                            if (code === '1') currentEntity.text = value;
+                        } else {
+                            if (code === '10') currentEntity.start.x = parseFloat(value);
+                            if (code === '20') currentEntity.start.y = -parseFloat(value);
+                            if (code === '11') currentEntity.end.x = parseFloat(value);
+                            if (code === '21') currentEntity.end.y = -parseFloat(value);
+                            if (code === '6' && value.includes('DASH')) currentEntity.type = 'dashed';
+                        }
                     }
-                    i++; // 値の行をスキップ
                 }
                 redrawAll();
                 document.getElementById('dxf-import').value = ""; // リセット
             };
             reader.readAsText(file);
         }
+        
+        // 初期化実行
+        updateScaleBar();
     </script>
 </body>
 </html>
