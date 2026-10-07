@@ -40,7 +40,7 @@
 
     <!-- 上部メニュー -->
     <div class="toolbar">
-        <h1 class="text-xl font-bold mr-4">横断面図v0.4 <span class="text-sm font-normal">(A4横)</span></h1>
+        <h1 class="text-xl font-bold mr-4">横断面図v0.5 <span class="text-sm font-normal">(A4横)</span></h1>
         <label>縮尺 1/</label>
         <input type="number" id="scale-input" value="100" class="w-20" onchange="updateScale()">
         
@@ -85,6 +85,8 @@
     <!-- 下部描画ツール -->
     <div class="toolbar">
         <button class="btn active" id="mode-select" onclick="setMode('select')">選択/移動</button>
+        <button class="btn hover:bg-red-500" id="mode-delete" onclick="setMode('delete')">要素削除</button>
+        <span class="border-l border-gray-500 h-6 mx-1"></span>
         <button class="btn" id="mode-solid" onclick="setMode('solid')">実線</button>
         <button class="btn" id="mode-dashed" onclick="setMode('dashed')">破線</button>
         <button class="btn" id="mode-text" onclick="setMode('text')">テキスト挿入</button>
@@ -115,7 +117,7 @@
 
         const CANVAS_WIDTH = 1122;
         const CANVAS_HEIGHT = 793;
-        const PIXELS_PER_MM = CANVAS_WIDTH / 297; // A4幅297mmに基づく変換率
+        const PIXELS_PER_MM = CANVAS_WIDTH / 297; 
 
         let lines = [];
         let texts = []; 
@@ -130,10 +132,11 @@
         
         let areaPoints = []; 
 
-        // テキスト移動用変数
+        // テキスト移動・削除用変数
         let draggingTextIndex = -1;
         let dragOffsetX = 0;
         let dragOffsetY = 0;
+        let hoveredDeleteElement = null; // 削除モード時のハイライト対象
 
         function saveState() {
             history.push(JSON.stringify({ lines, texts }));
@@ -170,8 +173,9 @@
             
             areaPoints = []; 
             draggingTextIndex = -1;
+            hoveredDeleteElement = null;
             uiCtx.clearRect(0, 0, uiCanvas.width, uiCanvas.height);
-            container.style.cursor = 'crosshair';
+            container.style.cursor = (mode === 'delete' || mode === 'select') ? 'default' : 'crosshair';
             
             const msgs = {
                 'solid': '始点から終点へドラッグ（Shiftキーで水平/垂直）',
@@ -179,7 +183,8 @@
                 'measure': '始点から終点へドラッグして距離を計測',
                 'area': '頂点を順番にクリックし、右クリックで面積計算結果を下部に表示',
                 'text': 'キャンバス上の配置したい場所をクリックしてテキストを挿入',
-                'select': 'テキストをドラッグで移動できます'
+                'select': 'テキストをドラッグで移動できます',
+                'delete': '削除したい線分やテキストをクリックしてください（赤くハイライトされます）'
             };
             infoBar.innerText = msgs[mode] || "";
         }
@@ -250,7 +255,6 @@
 
         function applyConstraints(start, end, e) {
             let res = { x: end.x, y: end.y };
-            
             if (e.shiftKey) {
                 const dx = Math.abs(end.x - start.x);
                 const dy = Math.abs(end.y - start.y);
@@ -273,10 +277,33 @@
             return res;
         }
 
+        // 線分と点の距離を求める関数（削除対象の判定用）
+        function distToSegment(p, v, w) {
+            let l2 = (w.x - v.x) ** 2 + (w.y - v.y) ** 2;
+            if (l2 == 0) return Math.hypot(p.x - v.x, p.y - v.y);
+            let t = ((p.x - v.x) * (w.x - v.x) + (p.y - v.y) * (w.y - v.y)) / l2;
+            t = Math.max(0, Math.min(1, t));
+            return Math.hypot(p.x - (v.x + t * (w.x - v.x)), p.y - (v.y + t * (w.y - v.y)));
+        }
+
         uiCanvas.addEventListener('mousedown', (e) => {
             if (e.button === 2) return; 
-            
             const pos = getMousePos(e);
+            
+            // 要素削除の実行
+            if (currentMode === 'delete' && hoveredDeleteElement) {
+                saveState();
+                if (hoveredDeleteElement.type === 'text') {
+                    texts.splice(hoveredDeleteElement.index, 1);
+                } else if (hoveredDeleteElement.type === 'line') {
+                    lines.splice(hoveredDeleteElement.index, 1);
+                }
+                hoveredDeleteElement = null;
+                redrawAll();
+                uiCtx.clearRect(0, 0, uiCanvas.width, uiCanvas.height);
+                return; 
+            }
+
             const effectivePos = snappedPoint || pos;
 
             if (currentMode === 'select') {
@@ -284,8 +311,7 @@
                 for (let i = texts.length - 1; i >= 0; i--) {
                     let t = texts[i];
                     let width = drawCtx.measureText(t.text).width;
-                    let height = 24; 
-                    if (Math.abs(pos.x - t.x) <= width / 2 + 10 && Math.abs(pos.y - t.y) <= height / 2 + 10) {
+                    if (Math.abs(pos.x - t.x) <= width / 2 + 10 && Math.abs(pos.y - t.y) <= 12) {
                         saveState();
                         draggingTextIndex = i;
                         dragOffsetX = pos.x - t.x;
@@ -316,6 +342,56 @@
 
             uiCtx.clearRect(0, 0, uiCanvas.width, uiCanvas.height);
 
+            // 要素削除モード時のハイライト判定
+            if (currentMode === 'delete') {
+                hoveredDeleteElement = null;
+                let minDist = 15; // 判定の甘さ（ピクセル）
+                
+                // まずテキストを優先判定
+                drawCtx.font = "16px sans-serif";
+                for (let i = texts.length - 1; i >= 0; i--) {
+                    let t = texts[i];
+                    let width = drawCtx.measureText(t.text).width;
+                    if (Math.abs(pos.x - t.x) <= width / 2 + 10 && Math.abs(pos.y - t.y) <= 12) {
+                        hoveredDeleteElement = { type: 'text', index: i };
+                        minDist = 0; 
+                        break;
+                    }
+                }
+                // 次に線分を判定
+                if (!hoveredDeleteElement) {
+                    for (let i = lines.length - 1; i >= 0; i--) {
+                        let d = distToSegment(pos, lines[i].start, lines[i].end);
+                        if (d < minDist) {
+                            minDist = d;
+                            hoveredDeleteElement = { type: 'line', index: i };
+                        }
+                    }
+                }
+                
+                // ハイライトの描画
+                if (hoveredDeleteElement) {
+                    container.style.cursor = 'pointer';
+                    if (hoveredDeleteElement.type === 'text') {
+                        let t = texts[hoveredDeleteElement.index];
+                        uiCtx.font = "16px sans-serif";
+                        let w = uiCtx.measureText(t.text).width;
+                        uiCtx.fillStyle = 'rgba(239, 68, 68, 0.3)'; // 薄い赤
+                        uiCtx.fillRect(t.x - w/2 - 5, t.y - 12, w + 10, 24);
+                    } else if (hoveredDeleteElement.type === 'line') {
+                        let l = lines[hoveredDeleteElement.index];
+                        uiCtx.beginPath();
+                        uiCtx.moveTo(l.start.x, l.start.y);
+                        uiCtx.lineTo(l.end.x, l.end.y);
+                        uiCtx.strokeStyle = 'rgba(239, 68, 68, 0.5)'; // 半透明の赤太線
+                        uiCtx.lineWidth = 6;
+                        uiCtx.stroke();
+                    }
+                } else {
+                    container.style.cursor = 'default';
+                }
+            }
+
             // テキスト移動処理
             if (currentMode === 'select') {
                 if (draggingTextIndex !== -1) {
@@ -323,7 +399,6 @@
                     texts[draggingTextIndex].y = pos.y - dragOffsetY;
                     redrawAll();
                 } else {
-                    // ホバー時のカーソル変更
                     let hovered = false;
                     drawCtx.font = "16px sans-serif";
                     for (let t of texts) {
@@ -333,7 +408,7 @@
                             break;
                         }
                     }
-                    container.style.cursor = hovered ? 'move' : 'crosshair';
+                    container.style.cursor = hovered ? 'move' : 'default';
                 }
             }
 
@@ -357,7 +432,7 @@
                 uiCtx.fillText("テキスト配置", pos.x + 5, pos.y - 5);
             }
 
-            if (snappedPoint && currentMode !== 'select') {
+            if (snappedPoint && (currentMode === 'solid' || currentMode === 'dashed' || currentMode === 'measure' || currentMode === 'area')) {
                 uiCtx.beginPath();
                 uiCtx.arc(snappedPoint.x, snappedPoint.y, 6, 0, Math.PI * 2);
                 uiCtx.fillStyle = 'rgba(0, 255, 0, 0.5)';
@@ -377,10 +452,8 @@
                 
                 if (currentMode === 'measure') {
                     uiCtx.setLineDash([5, 5]);
-                    uiCtx.strokeStyle = '#3b82f6'; // 青色
+                    uiCtx.strokeStyle = '#3b82f6'; 
                     uiCtx.lineWidth = 1;
-                    
-                    // リアルタイム距離表示（青）
                     infoBar.innerText = `距離: ${distMeters.toFixed(2)} m`;
                     uiCtx.stroke();
                     
@@ -392,11 +465,10 @@
 
                 } else {
                     uiCtx.setLineDash(currentMode === 'dashed' ? [10, 10] : []);
-                    uiCtx.strokeStyle = '#ef4444'; // 赤色
+                    uiCtx.strokeStyle = '#ef4444'; 
                     uiCtx.lineWidth = 2;
                     uiCtx.stroke();
                     
-                    // 実線・破線描画中のリアルタイム距離表示（赤）
                     if (distPix > 10) {
                         uiCtx.font = "14px sans-serif";
                         uiCtx.fillStyle = "#ef4444";
@@ -510,7 +582,6 @@
         async function exportPDF() {
             uiCtx.clearRect(0, 0, uiCanvas.width, uiCanvas.height);
             
-            // html2canvas対策: inputを一時的にspanに置換
             const inputs = document.querySelectorAll('#legend-box input');
             const replacements = [];
             inputs.forEach(input => {
@@ -526,7 +597,6 @@
             const canvasEl = document.getElementById('canvas-container');
             const canvas = await html2canvas(canvasEl, { scale: 2 });
             
-            // 置換したinputを元に戻す
             replacements.forEach(r => {
                 r.input.style.display = '';
                 r.span.remove();
