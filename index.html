@@ -40,18 +40,20 @@
             position: absolute;
             display: none;
             background: white;
-            border: 1px solid #3b82f6;
+            border: 2px solid #ef4444;
             padding: 2px 5px;
             border-radius: 4px;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+            box-shadow: 0 2px 6px rgba(0,0,0,0.3);
             z-index: 30;
         }
         #length-input-container input {
-            width: 60px;
+            width: 70px;
             border: none;
             outline: none;
-            font-size: 14px;
+            font-size: 16px;
             text-align: right;
+            font-weight: bold;
+            color: #ef4444;
         }
     </style>
 </head>
@@ -59,7 +61,7 @@
 
     <!-- 上部メニュー -->
     <div class="toolbar">
-        <h1 class="text-xl font-bold mr-4">横断面図v1.4 <span class="text-sm font-normal">(A4横)</span></h1>
+        <h1 class="text-xl font-bold mr-4">横断面図v1.5 <span class="text-sm font-normal">(A4横)</span></h1>
         <label>縮尺 1/</label>
         <input type="number" id="scale-input" value="100" class="w-20" onchange="updateScale()">
         
@@ -68,14 +70,14 @@
             <option value="0">0</option>
             <option value="1">1</option> 
             <option value="2">2</option>
-            <option value="3" selected>3</option> <!-- デフォは縦3本(左右4分割) -->
+            <option value="3" selected>3</option>
             <option value="4">4</option>
         </select>
         <label class="ml-1">横線:</label>
         <select id="grid-h" onchange="drawGrid()">
             <option value="0">0</option>
             <option value="1">1</option>
-            <option value="2" selected>2</option> <!-- デフォは横2本(上下3分割) -->
+            <option value="2" selected>2</option>
             <option value="3">3</option>
         </select>
 
@@ -99,7 +101,7 @@
 
             <!-- 長さ指定入力ボックス -->
             <div id="length-input-container">
-                <input type="number" id="manual-length-input" step="0.01" placeholder="長さ(m)"> m
+                <input type="text" id="manual-length-input" placeholder="長さ"> m
             </div>
 
             <!-- 右下凡例とスケールバー -->
@@ -120,7 +122,7 @@
     </div>
 
     <!-- 情報表示バー -->
-    <div id="info-bar">描画モードを選択してください（Shiftキーを押しながら描画で水平・垂直になります）</div>
+    <div id="info-bar">描画モードを選択してください</div>
 
     <!-- 下部描画ツール -->
     <div class="toolbar">
@@ -174,16 +176,14 @@
         let scale = 100;
         let selectedSlope = 'free';
         let snappedPoint = null;
-        let currentDraftEnd = null; // 長さ入力待ちのための現在終点
+        let currentDraftEnd = null; 
         
         let areaPoints = []; 
 
-        // ガイドライン用
         let guides = [];
         let hoveredGuideV = null;
         let hoveredGuideH = null;
 
-        // テキスト移動・削除用変数
         let draggingTextIndex = -1;
         let dragOffsetX = 0;
         let dragOffsetY = 0;
@@ -218,26 +218,22 @@
         window.addEventListener('resize', resizeCanvases);
         resizeCanvases();
 
-        // 配置ガイド（グリッド）の描画
         function drawGrid() {
             gridCtx.clearRect(0, 0, gridCanvas.width, gridCanvas.height);
             const numV = parseInt(document.getElementById('grid-v').value) || 0;
             const numH = parseInt(document.getElementById('grid-h').value) || 0;
 
             guides = []; 
-
-            // 縦線描画
             for (let i = 1; i <= numV; i++) {
                 const x = (gridCanvas.width / (numV + 1)) * i;
                 guides.push({type: 'v', pos: x});
-                
                 gridCtx.beginPath();
                 if (hoveredGuideV && Math.abs(hoveredGuideV.pos - x) < 1) {
-                    gridCtx.strokeStyle = 'rgba(59, 130, 246, 0.8)'; // 強調表示（濃い青）
+                    gridCtx.strokeStyle = 'rgba(59, 130, 246, 0.8)';
                     gridCtx.setLineDash([]);
                     gridCtx.lineWidth = 2;
                 } else {
-                    gridCtx.strokeStyle = 'rgba(59, 130, 246, 0.2)'; // 通常表示（薄い破線）
+                    gridCtx.strokeStyle = 'rgba(59, 130, 246, 0.2)';
                     gridCtx.setLineDash([10, 10]);
                     gridCtx.lineWidth = 1;
                 }
@@ -246,18 +242,16 @@
                 gridCtx.stroke();
             }
 
-            // 横線描画
             for (let i = 1; i <= numH; i++) {
                 const y = (gridCanvas.height / (numH + 1)) * i;
                 guides.push({type: 'h', pos: y});
-
                 gridCtx.beginPath();
                 if (hoveredGuideH && Math.abs(hoveredGuideH.pos - y) < 1) {
-                    gridCtx.strokeStyle = 'rgba(59, 130, 246, 0.8)'; // 強調表示（濃い青）
+                    gridCtx.strokeStyle = 'rgba(59, 130, 246, 0.8)';
                     gridCtx.setLineDash([]);
                     gridCtx.lineWidth = 2;
                 } else {
-                    gridCtx.strokeStyle = 'rgba(59, 130, 246, 0.2)'; // 通常表示（薄い破線）
+                    gridCtx.strokeStyle = 'rgba(59, 130, 246, 0.2)';
                     gridCtx.setLineDash([10, 10]);
                     gridCtx.lineWidth = 1;
                 }
@@ -281,8 +275,8 @@
             hideLengthInput();
             
             const msgs = {
-                'solid': '始点から終点へドラッグ（ドラッグ中に数値を入力してEnterで長さ指定できます）',
-                'dashed': '始点から終点へドラッグ（ドラッグ中に数値を入力してEnterで長さ指定できます）',
+                'solid': '始点から終点へドラッグ（★ドラッグ中に数字キーを叩くと長さを指定できます）',
+                'dashed': '始点から終点へドラッグ（★ドラッグ中に数字キーを叩くと長さを指定できます）',
                 'measure': '始点から終点へドラッグして距離を計測',
                 'area': '頂点を順番にクリックし、右クリックで面積計算結果を下部に表示',
                 'text': 'キャンバス上の配置したい場所をクリックしてテキストを挿入',
@@ -381,41 +375,47 @@
             return res;
         }
 
-        // 長さ指定入力関連
-        function showLengthInput(x, y, currentDistMeters) {
-            lengthInputContainer.style.display = 'block';
-            lengthInputContainer.style.left = (x + 15) + 'px';
-            lengthInputContainer.style.top = (y + 15) + 'px';
-            if(document.activeElement !== manualLengthInput) {
-                manualLengthInput.focus();
-                // 数値入力中もドラッグ扱いを継続させるため
-                manualLengthInput.value = currentDistMeters.toFixed(2);
-                manualLengthInput.select();
-            }
-        }
-
         function hideLengthInput() {
             lengthInputContainer.style.display = 'none';
             manualLengthInput.value = '';
-            // フォーカスを外す
             manualLengthInput.blur();
         }
 
-        // Enterキーで長さ確定
+        // ▼ キーボードで数字を打ち始めたら入力ボックスを出す処理 ▼
+        window.addEventListener('keydown', (e) => {
+            if (!isDrawing || !startPoint || !currentDraftEnd) return;
+            if (currentMode !== 'solid' && currentMode !== 'dashed') return;
+
+            // まだ入力ボックスにフォーカスが無い状態で、数字かドットが押された場合
+            if (document.activeElement !== manualLengthInput && /^[0-9.]$/.test(e.key)) {
+                lengthInputContainer.style.display = 'block';
+                
+                const rect = uiCanvas.getBoundingClientRect();
+                const scaleX = rect.width / CANVAS_WIDTH;
+                const scaleY = rect.height / CANVAS_HEIGHT;
+                
+                const cssX = currentDraftEnd.x * scaleX;
+                const cssY = currentDraftEnd.y * scaleY;
+
+                lengthInputContainer.style.left = (cssX + 15) + 'px';
+                lengthInputContainer.style.top = (cssY + 15) + 'px';
+                
+                manualLengthInput.value = e.key;
+                manualLengthInput.focus();
+                e.preventDefault();
+            }
+        });
+
         manualLengthInput.addEventListener('keydown', function(e) {
             if (e.key === 'Enter') {
                 e.preventDefault();
                 if (isDrawing && startPoint && currentDraftEnd) {
                     const specifiedMeters = parseFloat(this.value);
                     if (!isNaN(specifiedMeters) && specifiedMeters > 0) {
-                        // 指定された長さに合わせて終点を再計算
                         const dx = currentDraftEnd.x - startPoint.x;
                         const dy = currentDraftEnd.y - startPoint.y;
                         const angle = Math.atan2(dy, dx);
-                        
-                        // メートルからピクセルへ変換
                         const specifiedPx = (specifiedMeters * 1000 / scale) * PIXELS_PER_MM;
-                        
                         const newEndPos = {
                             x: startPoint.x + Math.cos(angle) * specifiedPx,
                             y: startPoint.y + Math.sin(angle) * specifiedPx
@@ -443,7 +443,6 @@
             }
         });
 
-        // 線分と点の距離を求める関数（削除対象の判定用）
         function distToSegment(p, v, w) {
             let l2 = (w.x - v.x) ** 2 + (w.y - v.y) ** 2;
             if (l2 == 0) return Math.hypot(p.x - v.x, p.y - v.y);
@@ -456,7 +455,6 @@
             if (e.button === 2) return; 
             const pos = getMousePos(e);
             
-            // 要素削除の実行
             if (currentMode === 'delete' && hoveredDeleteElement) {
                 saveState();
                 if (hoveredDeleteElement.type === 'text') {
@@ -488,6 +486,7 @@
             } else if (currentMode === 'solid' || currentMode === 'dashed' || currentMode === 'measure') {
                 isDrawing = true;
                 startPoint = effectivePos;
+                currentDraftEnd = effectivePos;
                 hideLengthInput();
             } else if (currentMode === 'text') {
                 const t = prompt('挿入するテキストを入力してください（寸法など）:');
@@ -509,7 +508,6 @@
 
             uiCtx.clearRect(0, 0, uiCanvas.width, uiCanvas.height);
 
-            // ガイドラインのホバー判定と強調表示（縦と横を独立して判定）
             let newHoveredGuideV = null;
             let newHoveredGuideH = null;
             let minGuideDistV = 15;
@@ -542,12 +540,10 @@
                 drawGrid();
             }
 
-            // 要素削除モード時のハイライト判定
             if (currentMode === 'delete') {
                 hoveredDeleteElement = null;
-                let minDist = 15; // 判定の甘さ（ピクセル）
+                let minDist = 15; 
                 
-                // まずテキストを優先判定
                 drawCtx.font = "16px sans-serif";
                 for (let i = texts.length - 1; i >= 0; i--) {
                     let t = texts[i];
@@ -558,7 +554,6 @@
                         break;
                     }
                 }
-                // 次に線分を判定
                 if (!hoveredDeleteElement) {
                     for (let i = lines.length - 1; i >= 0; i--) {
                         let d = distToSegment(pos, lines[i].start, lines[i].end);
@@ -569,21 +564,20 @@
                     }
                 }
                 
-                // ハイライトの描画
                 if (hoveredDeleteElement) {
                     container.style.cursor = 'pointer';
                     if (hoveredDeleteElement.type === 'text') {
                         let t = texts[hoveredDeleteElement.index];
                         uiCtx.font = "16px sans-serif";
                         let w = uiCtx.measureText(t.text).width;
-                        uiCtx.fillStyle = 'rgba(239, 68, 68, 0.3)'; // 薄い赤
+                        uiCtx.fillStyle = 'rgba(239, 68, 68, 0.3)'; 
                         uiCtx.fillRect(t.x - w/2 - 5, t.y - 12, w + 10, 24);
                     } else if (hoveredDeleteElement.type === 'line') {
                         let l = lines[hoveredDeleteElement.index];
                         uiCtx.beginPath();
                         uiCtx.moveTo(l.start.x, l.start.y);
                         uiCtx.lineTo(l.end.x, l.end.y);
-                        uiCtx.strokeStyle = 'rgba(239, 68, 68, 0.5)'; // 半透明の赤太線
+                        uiCtx.strokeStyle = 'rgba(239, 68, 68, 0.5)'; 
                         uiCtx.lineWidth = 6;
                         uiCtx.stroke();
                     }
@@ -592,7 +586,6 @@
                 }
             }
 
-            // テキスト移動処理
             if (currentMode === 'select') {
                 if (draggingTextIndex !== -1) {
                     texts[draggingTextIndex].x = pos.x - dragOffsetX;
@@ -612,7 +605,6 @@
                 }
             }
 
-            // テキスト挿入時のガイドライン（十字線）
             if (currentMode === 'text') {
                 uiCtx.beginPath();
                 uiCtx.moveTo(0, pos.y);
@@ -639,20 +631,21 @@
                 uiCtx.fill();
             }
 
-            // ドラッグ中の描画と数値入力ボックス表示
-            // （ただし、マニュアル入力ボックスにフォーカスがある時はマウス座標更新を一時無視する）
-            if (isDrawing && startPoint && document.activeElement !== manualLengthInput) {
-                let endPos = snappedPoint ? snappedPoint : applyConstraints(startPoint, effectivePos, e);
-                currentDraftEnd = endPos; // Enter確定用に保持
+            if (isDrawing && startPoint) {
+                // 入力ボックスがアクティブ「でない」場合のみ終点座標を更新する
+                if (document.activeElement !== manualLengthInput) {
+                    let endPos = snappedPoint ? snappedPoint : applyConstraints(startPoint, effectivePos, e);
+                    currentDraftEnd = endPos;
+                }
                 
-                const distPix = Math.hypot(endPos.x - startPoint.x, endPos.y - startPoint.y);
+                const distPix = Math.hypot(currentDraftEnd.x - startPoint.x, currentDraftEnd.y - startPoint.y);
                 const distMeters = (distPix / PIXELS_PER_MM) * (scale / 1000);
-                const midX = (startPoint.x + endPos.x) / 2;
-                const midY = (startPoint.y + endPos.y) / 2;
+                const midX = (startPoint.x + currentDraftEnd.x) / 2;
+                const midY = (startPoint.y + currentDraftEnd.y) / 2;
 
                 uiCtx.beginPath();
                 uiCtx.moveTo(startPoint.x, startPoint.y);
-                uiCtx.lineTo(endPos.x, endPos.y);
+                uiCtx.lineTo(currentDraftEnd.x, currentDraftEnd.y);
                 
                 if (currentMode === 'measure') {
                     uiCtx.setLineDash([5, 5]);
@@ -673,15 +666,13 @@
                     uiCtx.lineWidth = 2;
                     uiCtx.stroke();
                     
-                    if (distPix > 10) {
-                        // 線を描画中に直接数値を打ち込めるよう入力ボックスを表示
-                        // 画面内の適当な位置（マウスカーソルの少し右下）に配置
-                        const rect = uiCanvas.getBoundingClientRect();
-                        const cssX = e.clientX - rect.left;
-                        const cssY = e.clientY - rect.top;
-                        showLengthInput(cssX, cssY, distMeters);
-                    } else {
-                        hideLengthInput();
+                    // 入力ボックスが出ていない時だけ赤いテキストで距離を表示
+                    if (distPix > 10 && document.activeElement !== manualLengthInput) {
+                        uiCtx.font = "14px sans-serif";
+                        uiCtx.fillStyle = "#ef4444";
+                        uiCtx.textAlign = "center";
+                        uiCtx.textBaseline = "bottom";
+                        uiCtx.fillText(`${distMeters.toFixed(2)} m`, midX, midY - 5);
                     }
                 }
             } else if (currentMode === 'area' && areaPoints.length > 0) {
@@ -697,7 +688,7 @@
                 return;
             }
 
-            // マニュアル入力ボックスに入力中にマウスアップした場合は確定しない（Enter待ち）
+            // 長さを手入力中なら、マウスボタンを離しても線を描画終了させない（Enter待ち）
             if (isDrawing && startPoint && document.activeElement === manualLengthInput) {
                 return;
             }
@@ -727,7 +718,6 @@
             }
         });
 
-        // 面積計測の確定（右クリック）
         uiCanvas.addEventListener('contextmenu', (e) => {
             e.preventDefault();
             if (currentMode === 'area' && areaPoints.length >= 3) {
@@ -743,7 +733,7 @@
                 
                 infoBar.innerText = `面積計測結果: ${areaSqMeters.toFixed(2)} m2 （テキスト挿入モードで図面に書き込めます）`;
                 
-                areaPoints = []; // リセット
+                areaPoints = []; 
                 redrawAll();
                 uiCtx.clearRect(0, 0, uiCanvas.width, uiCanvas.height);
             } else if (currentMode === 'area') {
@@ -790,11 +780,10 @@
             });
         }
 
-        // PDF出力
         window.jsPDF = window.jspdf.jsPDF;
         async function exportPDF() {
             uiCtx.clearRect(0, 0, uiCanvas.width, uiCanvas.height);
-            gridCtx.clearRect(0, 0, gridCanvas.width, gridCanvas.height); // PDF出力時はガイドを非表示
+            gridCtx.clearRect(0, 0, gridCanvas.width, gridCanvas.height); 
             
             const inputs = document.querySelectorAll('#legend-box input');
             const replacements = [];
@@ -816,7 +805,7 @@
                 r.span.remove();
             });
 
-            drawGrid(); // PDF出力後にガイドを再表示
+            drawGrid(); 
 
             const imgData = canvas.toDataURL('image/png');
             const pdf = new jsPDF({ orientation: 'landscape', format: 'a4' });
@@ -824,7 +813,6 @@
             pdf.save('横断面図.pdf');
         }
 
-        // DXF出力 
         function exportDXF() {
             let dxf = `0\nSECTION\n2\nENTITIES\n`;
             lines.forEach(line => {
@@ -845,7 +833,6 @@
             link.click();
         }
 
-        // DXF読込 
         function importDXF(event) {
             const file = event.target.files[0];
             if (!file) return;
@@ -896,7 +883,6 @@
             reader.readAsText(file);
         }
         
-        // 初期化時に一度ガイドを描画
         drawGrid();
         updateScaleBar();
     </script>
