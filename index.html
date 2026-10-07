@@ -40,7 +40,7 @@
 
     <!-- 上部メニュー -->
     <div class="toolbar">
-        <h1 class="text-xl font-bold mr-4">横断面図v0.2 <span class="text-sm font-normal">(A4横)</span></h1>
+        <h1 class="text-xl font-bold mr-4">横断面図v0.3 <span class="text-sm font-normal">(A4横)</span></h1>
         <label>縮尺 1/</label>
         <input type="number" id="scale-input" value="100" class="w-20" onchange="updateScale()">
         
@@ -308,19 +308,32 @@
                 uiCtx.beginPath();
                 uiCtx.moveTo(startPoint.x, startPoint.y);
                 uiCtx.lineTo(endPos.x, endPos.y);
+
+                const distPix = Math.hypot(endPos.x - startPoint.x, endPos.y - startPoint.y);
+                const distMeters = (distPix / PIXELS_PER_MM) * (scale / 1000);
                 
                 if (currentMode === 'measure') {
                     uiCtx.setLineDash([5, 5]);
                     uiCtx.strokeStyle = '#3b82f6'; // 青色
                     uiCtx.lineWidth = 1;
-                    
-                    const distPix = Math.hypot(endPos.x - startPoint.x, endPos.y - startPoint.y);
-                    const distMeters = (distPix / PIXELS_PER_MM) * (scale / 1000);
                     infoBar.innerText = `距離: ${distMeters.toFixed(2)} m`;
                 } else {
                     uiCtx.setLineDash(currentMode === 'dashed' ? [10, 10] : []);
                     uiCtx.strokeStyle = '#ef4444'; // 赤色
                     uiCtx.lineWidth = 2;
+                    infoBar.innerText = `描画中... 長さ: ${distMeters.toFixed(2)} m`;
+
+                    // キャンバス上にリアルタイムで長さを表示
+                    const midX = (startPoint.x + endPos.x) / 2;
+                    const midY = (startPoint.y + endPos.y) / 2;
+                    uiCtx.save();
+                    uiCtx.font = "bold 14px sans-serif";
+                    uiCtx.fillStyle = "#ef4444";
+                    uiCtx.textAlign = "center";
+                    uiCtx.textBaseline = "bottom";
+                    // 線分の少し上に表示
+                    uiCtx.fillText(`${distMeters.toFixed(2)}m`, midX, midY - 8);
+                    uiCtx.restore();
                 }
                 uiCtx.stroke();
                 
@@ -337,14 +350,16 @@
                 const effectivePos = snappedPoint || pos;
                 let endPos = snappedPoint ? snappedPoint : applyConstraints(startPoint, effectivePos, e);
 
+                const distPix = Math.hypot(endPos.x - startPoint.x, endPos.y - startPoint.y);
+                const distMeters = (distPix / PIXELS_PER_MM) * (scale / 1000);
+
                 if (currentMode === 'measure') {
-                    const distPix = Math.hypot(endPos.x - startPoint.x, endPos.y - startPoint.y);
-                    const distMeters = (distPix / PIXELS_PER_MM) * (scale / 1000);
                     infoBar.innerText = `距離: ${distMeters.toFixed(2)} m （計測完了）`;
                 } else {
-                    if (Math.hypot(endPos.x - startPoint.x, endPos.y - startPoint.y) > 2) {
+                    if (distPix > 2) {
                         saveState();
                         lines.push({ start: startPoint, end: endPos, type: currentMode });
+                        infoBar.innerText = `線分を描画しました（長さ: ${distMeters.toFixed(2)} m）`;
                     }
                 }
                 
