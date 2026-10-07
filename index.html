@@ -40,11 +40,12 @@
             position: absolute;
             display: none;
             background: white;
-            border: 2px solid #ef4444;
-            padding: 2px 5px;
+            border: 2px solid #3b82f6;
+            padding: 4px 8px;
             border-radius: 4px;
-            box-shadow: 0 2px 6px rgba(0,0,0,0.3);
+            box-shadow: 0 4px 8px rgba(0,0,0,0.3);
             z-index: 30;
+            transform: translate(-50%, -50%); /* 中央寄せ */
         }
         #length-input-container input {
             width: 70px;
@@ -53,7 +54,7 @@
             font-size: 16px;
             text-align: right;
             font-weight: bold;
-            color: #ef4444;
+            color: #3b82f6;
         }
     </style>
 </head>
@@ -61,7 +62,7 @@
 
     <!-- 上部メニュー -->
     <div class="toolbar">
-        <h1 class="text-xl font-bold mr-4">横断面図v1.5 <span class="text-sm font-normal">(A4横)</span></h1>
+        <h1 class="text-xl font-bold mr-4">横断面図v1.6 <span class="text-sm font-normal">(A4横)</span></h1>
         <label>縮尺 1/</label>
         <input type="number" id="scale-input" value="100" class="w-20" onchange="updateScale()">
         
@@ -101,7 +102,7 @@
 
             <!-- 長さ指定入力ボックス -->
             <div id="length-input-container">
-                <input type="text" id="manual-length-input" placeholder="長さ"> m
+                <input type="number" id="manual-length-input" step="0.01" placeholder="長さ"> m
             </div>
 
             <!-- 右下凡例とスケールバー -->
@@ -176,7 +177,6 @@
         let scale = 100;
         let selectedSlope = 'free';
         let snappedPoint = null;
-        let currentDraftEnd = null; 
         
         let areaPoints = []; 
 
@@ -188,6 +188,9 @@
         let dragOffsetX = 0;
         let dragOffsetY = 0;
         let hoveredDeleteElement = null; 
+        
+        // 線分編集用
+        let selectedLineIndex = -1;
 
         function saveState() {
             history.push(JSON.stringify({ lines, texts }));
@@ -199,6 +202,8 @@
                 const state = JSON.parse(history.pop());
                 lines = state.lines;
                 texts = state.texts;
+                selectedLineIndex = -1;
+                hideLengthInput();
                 redrawAll();
                 infoBar.innerText = "1つ前の状態に戻しました";
             } else {
@@ -270,17 +275,19 @@
             areaPoints = []; 
             draggingTextIndex = -1;
             hoveredDeleteElement = null;
+            selectedLineIndex = -1;
             uiCtx.clearRect(0, 0, uiCanvas.width, uiCanvas.height);
             container.style.cursor = (mode === 'delete' || mode === 'select') ? 'default' : 'crosshair';
             hideLengthInput();
+            redrawAll();
             
             const msgs = {
-                'solid': '始点から終点へドラッグ（★ドラッグ中に数字キーを叩くと長さを指定できます）',
-                'dashed': '始点から終点へドラッグ（★ドラッグ中に数字キーを叩くと長さを指定できます）',
+                'solid': '始点から終点へドラッグして描画（Shiftキーで水平/垂直）',
+                'dashed': '始点から終点へドラッグして描画（Shiftキーで水平/垂直）',
                 'measure': '始点から終点へドラッグして距離を計測',
                 'area': '頂点を順番にクリックし、右クリックで面積計算結果を下部に表示',
                 'text': 'キャンバス上の配置したい場所をクリックしてテキストを挿入',
-                'select': 'テキストをドラッグで移動できます',
+                'select': 'テキストをドラッグで移動、または線分をクリックして長さを数値変更できます',
                 'delete': '消去したい線分やテキストをクリックしてください（赤くハイライトされます）'
             };
             infoBar.innerText = msgs[mode] || "";
@@ -290,6 +297,9 @@
             scale = parseFloat(document.getElementById('scale-input').value) || 100;
             document.getElementById('legend-scale-text').innerText = `S = 1/${scale}`;
             updateScaleBar();
+            // 縮尺変更時に選択中なら長さ再計算
+            if(selectedLineIndex !== -1) hideLengthInput(); 
+            redrawAll();
         }
 
         function updateScaleBar() {
@@ -310,6 +320,7 @@
                 lines = [];
                 texts = [];
                 areaPoints = [];
+                selectedLineIndex = -1;
                 redrawAll();
                 hideLengthInput();
             }
@@ -379,66 +390,42 @@
             lengthInputContainer.style.display = 'none';
             manualLengthInput.value = '';
             manualLengthInput.blur();
+            if (currentMode === 'select' && selectedLineIndex !== -1) {
+                selectedLineIndex = -1;
+                redrawAll();
+            }
         }
 
-        // ▼ キーボードで数字を打ち始めたら入力ボックスを出す処理 ▼
-        window.addEventListener('keydown', (e) => {
-            if (!isDrawing || !startPoint || !currentDraftEnd) return;
-            if (currentMode !== 'solid' && currentMode !== 'dashed') return;
-
-            // まだ入力ボックスにフォーカスが無い状態で、数字かドットが押された場合
-            if (document.activeElement !== manualLengthInput && /^[0-9.]$/.test(e.key)) {
-                lengthInputContainer.style.display = 'block';
-                
-                const rect = uiCanvas.getBoundingClientRect();
-                const scaleX = rect.width / CANVAS_WIDTH;
-                const scaleY = rect.height / CANVAS_HEIGHT;
-                
-                const cssX = currentDraftEnd.x * scaleX;
-                const cssY = currentDraftEnd.y * scaleY;
-
-                lengthInputContainer.style.left = (cssX + 15) + 'px';
-                lengthInputContainer.style.top = (cssY + 15) + 'px';
-                
-                manualLengthInput.value = e.key;
-                manualLengthInput.focus();
-                e.preventDefault();
-            }
-        });
-
+        // Enterキーで長さ確定 (選択した線を編集)
         manualLengthInput.addEventListener('keydown', function(e) {
             if (e.key === 'Enter') {
                 e.preventDefault();
-                if (isDrawing && startPoint && currentDraftEnd) {
+                if (currentMode === 'select' && selectedLineIndex !== -1) {
                     const specifiedMeters = parseFloat(this.value);
                     if (!isNaN(specifiedMeters) && specifiedMeters > 0) {
-                        const dx = currentDraftEnd.x - startPoint.x;
-                        const dy = currentDraftEnd.y - startPoint.y;
+                        saveState(); // 変更前に状態を保存
+                        
+                        let line = lines[selectedLineIndex];
+                        const dx = line.end.x - line.start.x;
+                        const dy = line.end.y - line.start.y;
                         const angle = Math.atan2(dy, dx);
+                        
+                        // メートルからピクセルへ変換
                         const specifiedPx = (specifiedMeters * 1000 / scale) * PIXELS_PER_MM;
-                        const newEndPos = {
-                            x: startPoint.x + Math.cos(angle) * specifiedPx,
-                            y: startPoint.y + Math.sin(angle) * specifiedPx
+                        
+                        line.end = {
+                            x: line.start.x + Math.cos(angle) * specifiedPx,
+                            y: line.start.y + Math.sin(angle) * specifiedPx
                         };
                         
-                        saveState();
-                        lines.push({ start: startPoint, end: newEndPos, type: currentMode });
-                        
-                        isDrawing = false;
-                        startPoint = null;
-                        currentDraftEnd = null;
-                        redrawAll();
-                        uiCtx.clearRect(0, 0, uiCanvas.width, uiCanvas.height);
+                        selectedLineIndex = -1;
                         hideLengthInput();
-                        infoBar.innerText = `長さ ${specifiedMeters.toFixed(2)} m で線分を描画しました`;
+                        redrawAll();
+                        infoBar.innerText = `長さを ${specifiedMeters.toFixed(2)} m に変更しました`;
                     }
                 }
             }
             if (e.key === 'Escape') {
-                isDrawing = false;
-                startPoint = null;
-                currentDraftEnd = null;
-                uiCtx.clearRect(0, 0, uiCanvas.width, uiCanvas.height);
                 hideLengthInput();
             }
         });
@@ -452,6 +439,11 @@
         }
 
         uiCanvas.addEventListener('mousedown', (e) => {
+            // もし入力ボックス以外をクリックしたらフォーカスを外して非表示にする
+            if(e.target !== manualLengthInput && selectedLineIndex !== -1) {
+                hideLengthInput();
+            }
+
             if (e.button === 2) return; 
             const pos = getMousePos(e);
             
@@ -471,6 +463,8 @@
             const effectivePos = snappedPoint || pos;
 
             if (currentMode === 'select') {
+                // まずテキスト判定
+                let textClicked = false;
                 drawCtx.font = "16px sans-serif";
                 for (let i = texts.length - 1; i >= 0; i--) {
                     let t = texts[i];
@@ -480,14 +474,52 @@
                         draggingTextIndex = i;
                         dragOffsetX = pos.x - t.x;
                         dragOffsetY = pos.y - t.y;
+                        textClicked = true;
                         break;
+                    }
+                }
+                
+                // テキストがクリックされなかったら線分判定（長さ変更用）
+                if (!textClicked) {
+                    let clickedLineIndex = -1;
+                    let minDist = 15;
+                    for (let i = lines.length - 1; i >= 0; i--) {
+                        let d = distToSegment(pos, lines[i].start, lines[i].end);
+                        if (d < minDist) {
+                            minDist = d;
+                            clickedLineIndex = i;
+                        }
+                    }
+                    
+                    if (clickedLineIndex !== -1) {
+                        selectedLineIndex = clickedLineIndex;
+                        let line = lines[selectedLineIndex];
+                        let distPx = Math.hypot(line.end.x - line.start.x, line.end.y - line.start.y);
+                        let distM = (distPx / PIXELS_PER_MM) * (scale / 1000);
+                        
+                        // 入力ボックスを線分の中央に表示
+                        const rect = uiCanvas.getBoundingClientRect();
+                        const scaleX = rect.width / CANVAS_WIDTH;
+                        const scaleY = rect.height / CANVAS_HEIGHT;
+                        let midX = ((line.start.x + line.end.x) / 2) * scaleX;
+                        let midY = ((line.start.y + line.end.y) / 2) * scaleY;
+                        
+                        lengthInputContainer.style.display = 'block';
+                        lengthInputContainer.style.left = midX + 'px';
+                        lengthInputContainer.style.top = midY + 'px';
+                        manualLengthInput.value = distM.toFixed(2);
+                        manualLengthInput.focus();
+                        manualLengthInput.select();
+                        redrawAll();
+                    } else {
+                        selectedLineIndex = -1;
+                        hideLengthInput();
+                        redrawAll();
                     }
                 }
             } else if (currentMode === 'solid' || currentMode === 'dashed' || currentMode === 'measure') {
                 isDrawing = true;
                 startPoint = effectivePos;
-                currentDraftEnd = effectivePos;
-                hideLengthInput();
             } else if (currentMode === 'text') {
                 const t = prompt('挿入するテキストを入力してください（寸法など）:');
                 if (t) {
@@ -582,7 +614,7 @@
                         uiCtx.stroke();
                     }
                 } else {
-                    container.style.cursor = (currentMode === 'delete') ? 'default' : 'crosshair';
+                    container.style.cursor = 'default';
                 }
             }
 
@@ -601,7 +633,16 @@
                             break;
                         }
                     }
-                    container.style.cursor = hovered ? 'move' : 'default';
+                    if (!hovered) {
+                        // 線分へのホバー判定
+                        for (let line of lines) {
+                            if (distToSegment(pos, line.start, line.end) < 15) {
+                                hovered = true;
+                                break;
+                            }
+                        }
+                    }
+                    container.style.cursor = hovered ? 'pointer' : 'default';
                 }
             }
 
@@ -632,20 +673,16 @@
             }
 
             if (isDrawing && startPoint) {
-                // 入力ボックスがアクティブ「でない」場合のみ終点座標を更新する
-                if (document.activeElement !== manualLengthInput) {
-                    let endPos = snappedPoint ? snappedPoint : applyConstraints(startPoint, effectivePos, e);
-                    currentDraftEnd = endPos;
-                }
+                let endPos = snappedPoint ? snappedPoint : applyConstraints(startPoint, effectivePos, e);
                 
-                const distPix = Math.hypot(currentDraftEnd.x - startPoint.x, currentDraftEnd.y - startPoint.y);
+                const distPix = Math.hypot(endPos.x - startPoint.x, endPos.y - startPoint.y);
                 const distMeters = (distPix / PIXELS_PER_MM) * (scale / 1000);
-                const midX = (startPoint.x + currentDraftEnd.x) / 2;
-                const midY = (startPoint.y + currentDraftEnd.y) / 2;
+                const midX = (startPoint.x + endPos.x) / 2;
+                const midY = (startPoint.y + endPos.y) / 2;
 
                 uiCtx.beginPath();
                 uiCtx.moveTo(startPoint.x, startPoint.y);
-                uiCtx.lineTo(currentDraftEnd.x, currentDraftEnd.y);
+                uiCtx.lineTo(endPos.x, endPos.y);
                 
                 if (currentMode === 'measure') {
                     uiCtx.setLineDash([5, 5]);
@@ -666,8 +703,7 @@
                     uiCtx.lineWidth = 2;
                     uiCtx.stroke();
                     
-                    // 入力ボックスが出ていない時だけ赤いテキストで距離を表示
-                    if (distPix > 10 && document.activeElement !== manualLengthInput) {
+                    if (distPix > 10) {
                         uiCtx.font = "14px sans-serif";
                         uiCtx.fillStyle = "#ef4444";
                         uiCtx.textAlign = "center";
@@ -685,11 +721,6 @@
 
             if (currentMode === 'select' && draggingTextIndex !== -1) {
                 draggingTextIndex = -1;
-                return;
-            }
-
-            // 長さを手入力中なら、マウスボタンを離しても線を描画終了させない（Enter待ち）
-            if (isDrawing && startPoint && document.activeElement === manualLengthInput) {
                 return;
             }
 
@@ -711,10 +742,8 @@
                 
                 isDrawing = false;
                 startPoint = null;
-                currentDraftEnd = null;
                 redrawAll();
                 uiCtx.clearRect(0, 0, uiCanvas.width, uiCanvas.height);
-                hideLengthInput();
             }
         });
 
@@ -761,13 +790,20 @@
         function redrawAll() {
             drawCtx.clearRect(0, 0, drawCanvas.width, drawCanvas.height);
             
-            lines.forEach(line => {
+            lines.forEach((line, index) => {
                 drawCtx.beginPath();
                 drawCtx.moveTo(line.start.x, line.start.y);
                 drawCtx.lineTo(line.end.x, line.end.y);
                 drawCtx.setLineDash(line.type === 'dashed' ? [10, 10] : []);
-                drawCtx.strokeStyle = '#000000';
-                drawCtx.lineWidth = 2;
+                
+                // 選択中の線分は太い青色でハイライト
+                if (index === selectedLineIndex) {
+                    drawCtx.strokeStyle = '#3b82f6';
+                    drawCtx.lineWidth = 4;
+                } else {
+                    drawCtx.strokeStyle = '#000000';
+                    drawCtx.lineWidth = 2;
+                }
                 drawCtx.stroke();
             });
 
@@ -784,6 +820,9 @@
         async function exportPDF() {
             uiCtx.clearRect(0, 0, uiCanvas.width, uiCanvas.height);
             gridCtx.clearRect(0, 0, gridCanvas.width, gridCanvas.height); 
+            selectedLineIndex = -1; // 出力時に選択ハイライトを解除
+            hideLengthInput();
+            redrawAll();
             
             const inputs = document.querySelectorAll('#legend-box input');
             const replacements = [];
