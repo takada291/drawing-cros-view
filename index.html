@@ -34,13 +34,32 @@
         .legend-table th { background: #f3f4f6; border: 1px solid #000; padding: 2px 4px; font-weight: normal; font-size: 12px; width: 60px;}
         .legend-table td { border: 1px solid #000; padding: 0; }
         .legend-table input { width: 100%; height: 100%; border: none; outline: none; text-align: center; font-size: 12px; background: transparent; color: black; }
+        
+        /* 長さ指定入力ボックス */
+        #length-input-container {
+            position: absolute;
+            display: none;
+            background: white;
+            border: 1px solid #3b82f6;
+            padding: 2px 5px;
+            border-radius: 4px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+            z-index: 30;
+        }
+        #length-input-container input {
+            width: 60px;
+            border: none;
+            outline: none;
+            font-size: 14px;
+            text-align: right;
+        }
     </style>
 </head>
 <body>
 
     <!-- 上部メニュー -->
     <div class="toolbar">
-        <h1 class="text-xl font-bold mr-4">横断面図v1.3 <span class="text-sm font-normal">(A4横)</span></h1>
+        <h1 class="text-xl font-bold mr-4">横断面図v1.4 <span class="text-sm font-normal">(A4横)</span></h1>
         <label>縮尺 1/</label>
         <input type="number" id="scale-input" value="100" class="w-20" onchange="updateScale()">
         
@@ -77,6 +96,11 @@
             <canvas id="gridLayer"></canvas>
             <canvas id="drawingLayer"></canvas>
             <canvas id="uiLayer"></canvas>
+
+            <!-- 長さ指定入力ボックス -->
+            <div id="length-input-container">
+                <input type="number" id="manual-length-input" step="0.01" placeholder="長さ(m)"> m
+            </div>
 
             <!-- 右下凡例とスケールバー -->
             <div id="legend-box" class="absolute bottom-4 right-4 bg-white border-2 border-black p-2 z-10 flex flex-col" style="width: 220px;">
@@ -132,6 +156,9 @@
         const drawCtx = drawCanvas.getContext('2d');
         const uiCtx = uiCanvas.getContext('2d');
         const infoBar = document.getElementById('info-bar');
+        
+        const lengthInputContainer = document.getElementById('length-input-container');
+        const manualLengthInput = document.getElementById('manual-length-input');
 
         const CANVAS_WIDTH = 1122;
         const CANVAS_HEIGHT = 793;
@@ -147,6 +174,7 @@
         let scale = 100;
         let selectedSlope = 'free';
         let snappedPoint = null;
+        let currentDraftEnd = null; // 長さ入力待ちのための現在終点
         
         let areaPoints = []; 
 
@@ -250,10 +278,11 @@
             hoveredDeleteElement = null;
             uiCtx.clearRect(0, 0, uiCanvas.width, uiCanvas.height);
             container.style.cursor = (mode === 'delete' || mode === 'select') ? 'default' : 'crosshair';
+            hideLengthInput();
             
             const msgs = {
-                'solid': '始点から終点へドラッグ（Shiftキーで水平/垂直）',
-                'dashed': '始点から終点へドラッグ（Shiftキーで水平/垂直）',
+                'solid': '始点から終点へドラッグ（ドラッグ中に数値を入力してEnterで長さ指定できます）',
+                'dashed': '始点から終点へドラッグ（ドラッグ中に数値を入力してEnterで長さ指定できます）',
                 'measure': '始点から終点へドラッグして距離を計測',
                 'area': '頂点を順番にクリックし、右クリックで面積計算結果を下部に表示',
                 'text': 'キャンバス上の配置したい場所をクリックしてテキストを挿入',
@@ -288,6 +317,7 @@
                 texts = [];
                 areaPoints = [];
                 redrawAll();
+                hideLengthInput();
             }
         }
 
@@ -351,6 +381,68 @@
             return res;
         }
 
+        // 長さ指定入力関連
+        function showLengthInput(x, y, currentDistMeters) {
+            lengthInputContainer.style.display = 'block';
+            lengthInputContainer.style.left = (x + 15) + 'px';
+            lengthInputContainer.style.top = (y + 15) + 'px';
+            if(document.activeElement !== manualLengthInput) {
+                manualLengthInput.focus();
+                // 数値入力中もドラッグ扱いを継続させるため
+                manualLengthInput.value = currentDistMeters.toFixed(2);
+                manualLengthInput.select();
+            }
+        }
+
+        function hideLengthInput() {
+            lengthInputContainer.style.display = 'none';
+            manualLengthInput.value = '';
+            // フォーカスを外す
+            manualLengthInput.blur();
+        }
+
+        // Enterキーで長さ確定
+        manualLengthInput.addEventListener('keydown', function(e) {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                if (isDrawing && startPoint && currentDraftEnd) {
+                    const specifiedMeters = parseFloat(this.value);
+                    if (!isNaN(specifiedMeters) && specifiedMeters > 0) {
+                        // 指定された長さに合わせて終点を再計算
+                        const dx = currentDraftEnd.x - startPoint.x;
+                        const dy = currentDraftEnd.y - startPoint.y;
+                        const angle = Math.atan2(dy, dx);
+                        
+                        // メートルからピクセルへ変換
+                        const specifiedPx = (specifiedMeters * 1000 / scale) * PIXELS_PER_MM;
+                        
+                        const newEndPos = {
+                            x: startPoint.x + Math.cos(angle) * specifiedPx,
+                            y: startPoint.y + Math.sin(angle) * specifiedPx
+                        };
+                        
+                        saveState();
+                        lines.push({ start: startPoint, end: newEndPos, type: currentMode });
+                        
+                        isDrawing = false;
+                        startPoint = null;
+                        currentDraftEnd = null;
+                        redrawAll();
+                        uiCtx.clearRect(0, 0, uiCanvas.width, uiCanvas.height);
+                        hideLengthInput();
+                        infoBar.innerText = `長さ ${specifiedMeters.toFixed(2)} m で線分を描画しました`;
+                    }
+                }
+            }
+            if (e.key === 'Escape') {
+                isDrawing = false;
+                startPoint = null;
+                currentDraftEnd = null;
+                uiCtx.clearRect(0, 0, uiCanvas.width, uiCanvas.height);
+                hideLengthInput();
+            }
+        });
+
         // 線分と点の距離を求める関数（削除対象の判定用）
         function distToSegment(p, v, w) {
             let l2 = (w.x - v.x) ** 2 + (w.y - v.y) ** 2;
@@ -396,6 +488,7 @@
             } else if (currentMode === 'solid' || currentMode === 'dashed' || currentMode === 'measure') {
                 isDrawing = true;
                 startPoint = effectivePos;
+                hideLengthInput();
             } else if (currentMode === 'text') {
                 const t = prompt('挿入するテキストを入力してください（寸法など）:');
                 if (t) {
@@ -546,8 +639,12 @@
                 uiCtx.fill();
             }
 
-            if (isDrawing && startPoint) {
+            // ドラッグ中の描画と数値入力ボックス表示
+            // （ただし、マニュアル入力ボックスにフォーカスがある時はマウス座標更新を一時無視する）
+            if (isDrawing && startPoint && document.activeElement !== manualLengthInput) {
                 let endPos = snappedPoint ? snappedPoint : applyConstraints(startPoint, effectivePos, e);
+                currentDraftEnd = endPos; // Enter確定用に保持
+                
                 const distPix = Math.hypot(endPos.x - startPoint.x, endPos.y - startPoint.y);
                 const distMeters = (distPix / PIXELS_PER_MM) * (scale / 1000);
                 const midX = (startPoint.x + endPos.x) / 2;
@@ -577,14 +674,16 @@
                     uiCtx.stroke();
                     
                     if (distPix > 10) {
-                        uiCtx.font = "14px sans-serif";
-                        uiCtx.fillStyle = "#ef4444";
-                        uiCtx.textAlign = "center";
-                        uiCtx.textBaseline = "bottom";
-                        uiCtx.fillText(`${distMeters.toFixed(2)} m`, midX, midY - 5);
+                        // 線を描画中に直接数値を打ち込めるよう入力ボックスを表示
+                        // 画面内の適当な位置（マウスカーソルの少し右下）に配置
+                        const rect = uiCanvas.getBoundingClientRect();
+                        const cssX = e.clientX - rect.left;
+                        const cssY = e.clientY - rect.top;
+                        showLengthInput(cssX, cssY, distMeters);
+                    } else {
+                        hideLengthInput();
                     }
                 }
-                
             } else if (currentMode === 'area' && areaPoints.length > 0) {
                 drawAreaPreview(effectivePos);
             }
@@ -595,6 +694,11 @@
 
             if (currentMode === 'select' && draggingTextIndex !== -1) {
                 draggingTextIndex = -1;
+                return;
+            }
+
+            // マニュアル入力ボックスに入力中にマウスアップした場合は確定しない（Enter待ち）
+            if (isDrawing && startPoint && document.activeElement === manualLengthInput) {
                 return;
             }
 
@@ -616,8 +720,10 @@
                 
                 isDrawing = false;
                 startPoint = null;
+                currentDraftEnd = null;
                 redrawAll();
                 uiCtx.clearRect(0, 0, uiCanvas.width, uiCanvas.height);
+                hideLengthInput();
             }
         });
 
