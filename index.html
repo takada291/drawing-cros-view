@@ -40,16 +40,16 @@
 
     <!-- 上部メニュー -->
     <div class="toolbar">
-        <h1 class="text-xl font-bold mr-4">横断面図v1.2 <span class="text-sm font-normal">(A4横)</span></h1>
+        <h1 class="text-xl font-bold mr-4">横断面図v1.3 <span class="text-sm font-normal">(A4横)</span></h1>
         <label>縮尺 1/</label>
         <input type="number" id="scale-input" value="100" class="w-20" onchange="updateScale()">
         
         <label class="ml-4">配置ガイド 縦線:</label>
         <select id="grid-v" onchange="drawGrid()">
             <option value="0">0</option>
-            <option value="1" selected>1</option> <!-- デフォは縦1本(左右2分割) -->
+            <option value="1">1</option> 
             <option value="2">2</option>
-            <option value="3">3</option>
+            <option value="3" selected>3</option> <!-- デフォは縦3本(左右4分割) -->
             <option value="4">4</option>
         </select>
         <label class="ml-1">横線:</label>
@@ -152,7 +152,8 @@
 
         // ガイドライン用
         let guides = [];
-        let hoveredGuide = null;
+        let hoveredGuideV = null;
+        let hoveredGuideH = null;
 
         // テキスト移動・削除用変数
         let draggingTextIndex = -1;
@@ -203,7 +204,7 @@
                 guides.push({type: 'v', pos: x});
                 
                 gridCtx.beginPath();
-                if (hoveredGuide && hoveredGuide.type === 'v' && Math.abs(hoveredGuide.pos - x) < 1) {
+                if (hoveredGuideV && Math.abs(hoveredGuideV.pos - x) < 1) {
                     gridCtx.strokeStyle = 'rgba(59, 130, 246, 0.8)'; // 強調表示（濃い青）
                     gridCtx.setLineDash([]);
                     gridCtx.lineWidth = 2;
@@ -223,7 +224,7 @@
                 guides.push({type: 'h', pos: y});
 
                 gridCtx.beginPath();
-                if (hoveredGuide && hoveredGuide.type === 'h' && Math.abs(hoveredGuide.pos - y) < 1) {
+                if (hoveredGuideH && Math.abs(hoveredGuideH.pos - y) < 1) {
                     gridCtx.strokeStyle = 'rgba(59, 130, 246, 0.8)'; // 強調表示（濃い青）
                     gridCtx.setLineDash([]);
                     gridCtx.lineWidth = 2;
@@ -415,24 +416,36 @@
 
             uiCtx.clearRect(0, 0, uiCanvas.width, uiCanvas.height);
 
-            // ガイドラインのホバー判定と強調表示
-            let newHoveredGuide = null;
-            let minGuideDist = 15; // ガイドのホバー判定の甘さ
+            // ガイドラインのホバー判定と強調表示（縦と横を独立して判定）
+            let newHoveredGuideV = null;
+            let newHoveredGuideH = null;
+            let minGuideDistV = 15;
+            let minGuideDistH = 15;
+
             for (let g of guides) {
-                let d = (g.type === 'v') ? Math.abs(pos.x - g.pos) : Math.abs(pos.y - g.pos);
-                if (d < minGuideDist) {
-                    minGuideDist = d;
-                    newHoveredGuide = g;
+                if (g.type === 'v') {
+                    let d = Math.abs(pos.x - g.pos);
+                    if (d < minGuideDistV) {
+                        minGuideDistV = d;
+                        newHoveredGuideV = g;
+                    }
+                } else if (g.type === 'h') {
+                    let d = Math.abs(pos.y - g.pos);
+                    if (d < minGuideDistH) {
+                        minGuideDistH = d;
+                        newHoveredGuideH = g;
+                    }
                 }
             }
             
             let isGuideChanged = false;
-            if (!hoveredGuide && newHoveredGuide) isGuideChanged = true;
-            if (hoveredGuide && !newHoveredGuide) isGuideChanged = true;
-            if (hoveredGuide && newHoveredGuide && (hoveredGuide.type !== newHoveredGuide.type || hoveredGuide.pos !== newHoveredGuide.pos)) isGuideChanged = true;
+            if (hoveredGuideV !== newHoveredGuideV || hoveredGuideH !== newHoveredGuideH) {
+                isGuideChanged = true;
+            }
             
             if (isGuideChanged) {
-                hoveredGuide = newHoveredGuide;
+                hoveredGuideV = newHoveredGuideV;
+                hoveredGuideH = newHoveredGuideH;
                 drawGrid();
             }
 
