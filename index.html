@@ -7,6 +7,17 @@
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+    
+    <script async src="https://www.googletagmanager.com/gtag/js?id=G-WXBP6CPKLP"></script>
+    <script>
+      window.dataLayer = window.dataLayer || [];
+      function gtag(){dataLayer.push(arguments);}
+      gtag('js', new Date());
+
+      // 測定ID
+      gtag('config', 'G-WXBP6CPKLP');
+    </script>
+    
     <style>
         body { background-color: #f3f4f6; display: flex; flex-direction: column; height: 100vh; margin: 0; user-select: none; }
         /* A4横の比率 (297:210) = 1122px : 793px */
@@ -31,9 +42,11 @@
         #info-bar { background: #e5e7eb; padding: 5px 10px; font-size: 14px; text-align: center; font-weight: bold; color: #111827; }
         
         /* 凡例テーブル */
-        .legend-table th { background: #f3f4f6; border: 1px solid #000; padding: 2px 4px; font-weight: normal; font-size: 12px; width: 60px;}
+        .legend-table th { background: #f3f4f6; border: 1px solid #000; padding: 0; font-weight: normal; font-size: 12px; width: 60px;}
         .legend-table td { border: 1px solid #000; padding: 0; }
-        .legend-table input { width: 100%; height: 100%; border: none; outline: none; text-align: center; font-size: 12px; background: transparent; color: black; }
+        /* 項目名（th）と値（td）の両方を手入力可能にする */
+        .legend-table input { width: 100%; height: 100%; border: none; outline: none; text-align: center; font-size: 12px; background: transparent; color: black; padding: 2px;}
+        .legend-table th input { font-weight: normal; }
         
         /* 長さ指定入力ボックス */
         #length-input-container {
@@ -62,7 +75,7 @@
 
     <!-- 上部メニュー -->
     <div class="toolbar">
-        <h1 class="text-xl font-bold mr-4">横断面図v1.6 <span class="text-sm font-normal">(A4横)</span></h1>
+        <h1 class="text-xl font-bold mr-4">横断面図v1.7 <span class="text-sm font-normal">(A4横)</span></h1>
         <label>縮尺 1/</label>
         <input type="number" id="scale-input" value="100" class="w-20" onchange="updateScale()">
         
@@ -87,6 +100,11 @@
         
         <div class="flex-grow"></div>
 
+        <!-- 表題保存・読込 -->
+        <button class="btn text-green-300 border-green-500 hover:bg-green-700" onclick="exportLegend()">表題保存</button>
+        <input type="file" id="legend-import" accept=".json" style="display: none;" onchange="importLegend(event)">
+        <button class="btn text-green-300 border-green-500 hover:bg-green-700 mr-2" onclick="document.getElementById('legend-import').click()">表題読込</button>
+
         <button class="btn" onclick="exportPDF()">PDF出力</button>
         <button class="btn" onclick="exportDXF()">DXF保存</button>
         <input type="file" id="dxf-import" accept=".dxf" style="display: none;" onchange="importDXF(event)">
@@ -108,10 +126,22 @@
             <!-- 右下凡例とスケールバー -->
             <div id="legend-box" class="absolute bottom-4 right-4 bg-white border-2 border-black p-2 z-10 flex flex-col" style="width: 220px;">
                 <table class="legend-table w-full border-collapse text-center mb-2">
-                    <tr><th>路線名</th><td><input type="text" value="作業道 〇〇線"></td></tr>
-                    <tr><th>施工箇所</th><td><input type="text" value="〇〇市〇〇町 地内"></td></tr>
-                    <tr><th>測点</th><td><input type="text" value="NO.0"></td></tr>
-                    <tr><th>縮尺</th><td id="legend-scale-text" class="text-xs font-bold py-1">S = 1/100</td></tr>
+                    <tr>
+                        <th><input type="text" value="路線名"></th>
+                        <td><input type="text" value="作業道 〇〇線"></td>
+                    </tr>
+                    <tr>
+                        <th><input type="text" value="施工箇所"></th>
+                        <td><input type="text" value="〇〇市〇〇町 地内"></td>
+                    </tr>
+                    <tr>
+                        <th><input type="text" value="測点"></th>
+                        <td><input type="text" value="NO.0"></td>
+                    </tr>
+                    <tr>
+                        <th><input type="text" value="縮尺"></th>
+                        <td id="legend-scale-text" class="text-xs font-bold py-1">S = 1/100</td>
+                    </tr>
                 </table>
                 <!-- スケールバー -->
                 <div class="flex flex-col items-center">
@@ -136,15 +166,19 @@
         <button class="btn" id="mode-measure" onclick="setMode('measure')">距離計測</button>
         <button class="btn" id="mode-area" onclick="setMode('area')">面積計測</button>
         
-        <label class="ml-4">勾配指定:</label>
-        <select id="slope-select" onchange="updateSlope()">
-            <option value="free">自由</option>
-            <option value="0.3">3分 (1:0.3)</option>
-            <option value="0.5">5分 (1:0.5)</option>
-            <option value="0.6">6分 (1:0.6)</option>
-            <option value="1.0">1割 (1:1.0)</option>
-            <option value="1.2">1割2分 (1:1.2)</option>
-            <option value="1.5">1割5分 (1:1.5)</option>
+        <span class="border-l border-gray-500 h-6 mx-1"></span>
+        
+        <!-- 角度・勾配の制約オプション -->
+        <label class="ml-2"><input type="radio" name="angle-constraint" value="free" checked onchange="updateConstraintMode()"> 自由</label>
+        
+        <label class="ml-4"><input type="radio" name="angle-constraint" value="slope" onchange="updateConstraintMode()"> 勾配:</label>
+        <select id="slope-select" onchange="updateSlope()" disabled class="ml-1 w-16">
+            <!-- JSで 1:0.1 ~ 1:2.0 を生成 -->
+        </select>
+        
+        <label class="ml-4"><input type="radio" name="angle-constraint" value="angle" onchange="updateConstraintMode()"> 角度:</label>
+        <select id="angle-select" onchange="updateAngle()" disabled class="ml-1 w-20">
+            <!-- JSで 1 ~ 89度 を生成 -->
         </select>
         
         <label class="ml-4"><input type="checkbox" id="snap-toggle" checked> スナップ(端点)</label>
@@ -175,8 +209,8 @@
         let isDrawing = false;
         let startPoint = null;
         let scale = 100;
-        let selectedSlope = 'free';
         let snappedPoint = null;
+        let currentDraftEnd = null; 
         
         let areaPoints = []; 
 
@@ -189,8 +223,51 @@
         let dragOffsetY = 0;
         let hoveredDeleteElement = null; 
         
-        // 線分編集用
         let selectedLineIndex = -1;
+
+        // 勾配・角度制約用変数
+        let constraintMode = 'free'; 
+        let selectedSlope = 0.6;
+        let selectedAngle = 30;
+
+        // --- 初期化処理 ---
+        // 勾配プルダウンの生成 (1:0.1 ~ 1:2.0)
+        const slopeSelect = document.getElementById('slope-select');
+        for(let i = 1; i <= 20; i++) {
+            let val = (i / 10).toFixed(1);
+            let opt = document.createElement('option');
+            opt.value = val;
+            opt.text = `1:${val}`;
+            slopeSelect.add(opt);
+        }
+        slopeSelect.value = "0.6";
+
+        // 角度プルダウンの生成 (1 ~ 89)
+        const angleSelect = document.getElementById('angle-select');
+        for(let i = 1; i <= 89; i++) {
+            let opt = document.createElement('option');
+            opt.value = i;
+            opt.text = `${i}度`;
+            angleSelect.add(opt);
+        }
+        angleSelect.value = "30";
+
+        function updateConstraintMode() {
+            constraintMode = document.querySelector('input[name="angle-constraint"]:checked').value;
+            document.getElementById('slope-select').disabled = (constraintMode !== 'slope');
+            document.getElementById('angle-select').disabled = (constraintMode !== 'angle');
+            updateSlope();
+            updateAngle();
+        }
+        
+        function updateSlope() {
+            selectedSlope = parseFloat(document.getElementById('slope-select').value);
+        }
+        
+        function updateAngle() {
+            selectedAngle = parseFloat(document.getElementById('angle-select').value);
+        }
+        // --- 初期化処理 ここまで ---
 
         function saveState() {
             history.push(JSON.stringify({ lines, texts }));
@@ -297,7 +374,6 @@
             scale = parseFloat(document.getElementById('scale-input').value) || 100;
             document.getElementById('legend-scale-text').innerText = `S = 1/${scale}`;
             updateScaleBar();
-            // 縮尺変更時に選択中なら長さ再計算
             if(selectedLineIndex !== -1) hideLengthInput(); 
             redrawAll();
         }
@@ -308,10 +384,6 @@
             const pxWidth = mmOnPaper * PIXELS_PER_MM;
             document.getElementById('scale-bar-line').style.width = pxWidth + 'px';
             document.getElementById('scale-bar-text').innerText = `${realMeters}m`;
-        }
-
-        function updateSlope() {
-            selectedSlope = document.getElementById('slope-select').value;
         }
 
         function clearCanvas() {
@@ -375,12 +447,20 @@
                 return res;
             }
 
-            if (selectedSlope !== 'free') {
-                const H = parseFloat(selectedSlope);
+            if (constraintMode === 'slope') {
+                const H = selectedSlope;
                 const dx = end.x - start.x;
                 const dy = end.y - start.y;
                 const signX = dx >= 0 ? 1 : -1;
                 const newDx = Math.abs(dy) * H * signX;
+                res = { x: start.x + newDx, y: end.y };
+            } else if (constraintMode === 'angle') {
+                const rad = selectedAngle * Math.PI / 180;
+                const dx = end.x - start.x;
+                const dy = end.y - start.y;
+                const signX = dx >= 0 ? 1 : -1;
+                // V = dy, H = V / tan(rad)
+                const newDx = Math.abs(dy) / Math.tan(rad) * signX;
                 res = { x: start.x + newDx, y: end.y };
             }
             return res;
@@ -403,14 +483,13 @@
                 if (currentMode === 'select' && selectedLineIndex !== -1) {
                     const specifiedMeters = parseFloat(this.value);
                     if (!isNaN(specifiedMeters) && specifiedMeters > 0) {
-                        saveState(); // 変更前に状態を保存
+                        saveState(); 
                         
                         let line = lines[selectedLineIndex];
                         const dx = line.end.x - line.start.x;
                         const dy = line.end.y - line.start.y;
                         const angle = Math.atan2(dy, dx);
                         
-                        // メートルからピクセルへ変換
                         const specifiedPx = (specifiedMeters * 1000 / scale) * PIXELS_PER_MM;
                         
                         line.end = {
@@ -439,7 +518,6 @@
         }
 
         uiCanvas.addEventListener('mousedown', (e) => {
-            // もし入力ボックス以外をクリックしたらフォーカスを外して非表示にする
             if(e.target !== manualLengthInput && selectedLineIndex !== -1) {
                 hideLengthInput();
             }
@@ -463,7 +541,6 @@
             const effectivePos = snappedPoint || pos;
 
             if (currentMode === 'select') {
-                // まずテキスト判定
                 let textClicked = false;
                 drawCtx.font = "16px sans-serif";
                 for (let i = texts.length - 1; i >= 0; i--) {
@@ -479,7 +556,6 @@
                     }
                 }
                 
-                // テキストがクリックされなかったら線分判定（長さ変更用）
                 if (!textClicked) {
                     let clickedLineIndex = -1;
                     let minDist = 15;
@@ -497,7 +573,6 @@
                         let distPx = Math.hypot(line.end.x - line.start.x, line.end.y - line.start.y);
                         let distM = (distPx / PIXELS_PER_MM) * (scale / 1000);
                         
-                        // 入力ボックスを線分の中央に表示
                         const rect = uiCanvas.getBoundingClientRect();
                         const scaleX = rect.width / CANVAS_WIDTH;
                         const scaleY = rect.height / CANVAS_HEIGHT;
@@ -614,7 +689,7 @@
                         uiCtx.stroke();
                     }
                 } else {
-                    container.style.cursor = 'default';
+                    container.style.cursor = (currentMode === 'delete') ? 'default' : 'crosshair';
                 }
             }
 
@@ -634,7 +709,6 @@
                         }
                     }
                     if (!hovered) {
-                        // 線分へのホバー判定
                         for (let line of lines) {
                             if (distToSegment(pos, line.start, line.end) < 15) {
                                 hovered = true;
@@ -796,7 +870,6 @@
                 drawCtx.lineTo(line.end.x, line.end.y);
                 drawCtx.setLineDash(line.type === 'dashed' ? [10, 10] : []);
                 
-                // 選択中の線分は太い青色でハイライト
                 if (index === selectedLineIndex) {
                     drawCtx.strokeStyle = '#3b82f6';
                     drawCtx.lineWidth = 4;
@@ -816,15 +889,45 @@
             });
         }
 
+        // --- 表題の保存と読込 ---
+        function exportLegend() {
+            const inputs = document.querySelectorAll('#legend-box input[type="text"]');
+            const data = Array.from(inputs).map(inp => inp.value);
+            const blob = new Blob([JSON.stringify(data)], { type: 'application/json' });
+            const link = document.createElement('a');
+            link.href = URL.createObjectURL(blob);
+            link.download = 'legend_data.json';
+            link.click();
+        }
+
+        function importLegend(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                try {
+                    const data = JSON.parse(e.target.result);
+                    const inputs = document.querySelectorAll('#legend-box input[type="text"]');
+                    inputs.forEach((inp, idx) => {
+                        if(data[idx] !== undefined) inp.value = data[idx];
+                    });
+                } catch(err) {
+                    alert("ファイルの読み込みに失敗しました。正しいJSONファイルを選択してください。");
+                }
+                document.getElementById('legend-import').value = ""; // リセット
+            };
+            reader.readAsText(file);
+        }
+
         window.jsPDF = window.jspdf.jsPDF;
         async function exportPDF() {
             uiCtx.clearRect(0, 0, uiCanvas.width, uiCanvas.height);
             gridCtx.clearRect(0, 0, gridCanvas.width, gridCanvas.height); 
-            selectedLineIndex = -1; // 出力時に選択ハイライトを解除
+            selectedLineIndex = -1; 
             hideLengthInput();
             redrawAll();
             
-            const inputs = document.querySelectorAll('#legend-box input');
+            const inputs = document.querySelectorAll('#legend-box input[type="text"]');
             const replacements = [];
             inputs.forEach(input => {
                 const span = document.createElement('span');
@@ -922,6 +1025,8 @@
             reader.readAsText(file);
         }
         
+        // 起動時初期化
+        updateConstraintMode(); // ラジオボタンの状態を適用
         drawGrid();
         updateScaleBar();
     </script>
