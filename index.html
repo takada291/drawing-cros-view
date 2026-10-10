@@ -75,7 +75,7 @@
 
     <!-- 上部メニュー -->
     <div class="toolbar">
-        <h1 class="text-xl font-bold mr-4">横断面図v1.7 <span class="text-sm font-normal">(A4横)</span></h1>
+        <h1 class="text-xl font-bold mr-4">横断面図v1.8 <span class="text-sm font-normal">(A4横)</span></h1>
         <label>縮尺 1/</label>
         <input type="number" id="scale-input" value="100" class="w-20" onchange="updateScale()">
         
@@ -930,21 +930,21 @@
             const inputs = document.querySelectorAll('#legend-box input[type="text"]');
             const replacements = [];
             inputs.forEach(input => {
-                const span = document.createElement('span');
-                span.innerText = input.value;
-                span.style.fontSize = '12px';
-                span.style.display = 'block';
-                input.parentNode.insertBefore(span, input);
-                input.style.display = 'none';
-                replacements.push({input, span});
+                const parent = input.parentNode;
+                const val = input.value;
+                replacements.push({parent: parent, input: input});
+                
+                // html2canvasできれいに描画されるよう、一時的に親要素の中身をテキストspanに置き換え
+                parent.innerHTML = `<span style="display:block; font-size:12px; text-align:center; width:100%; padding:2px 0;">${val}</span>`;
             });
 
             const canvasEl = document.getElementById('canvas-container');
             const canvas = await html2canvas(canvasEl, { scale: 2 });
             
+            // 元に戻す
             replacements.forEach(r => {
-                r.input.style.display = '';
-                r.span.remove();
+                r.parent.innerHTML = '';
+                r.parent.appendChild(r.input);
             });
 
             drawGrid(); 
