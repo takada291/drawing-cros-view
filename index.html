@@ -13,8 +13,6 @@
       window.dataLayer = window.dataLayer || [];
       function gtag(){dataLayer.push(arguments);}
       gtag('js', new Date());
-
-      // 測定ID
       gtag('config', 'G-WXBP6CPKLP');
     </script>
     
@@ -44,7 +42,6 @@
         /* 凡例テーブル */
         .legend-table th { background: #f3f4f6; border: 1px solid #000; padding: 0; font-weight: normal; font-size: 12px; width: 60px;}
         .legend-table td { border: 1px solid #000; padding: 0; }
-        /* 項目名（th）と値（td）の両方を手入力可能にする */
         .legend-table input { width: 100%; height: 100%; border: none; outline: none; text-align: center; font-size: 12px; background: transparent; color: black; padding: 2px;}
         .legend-table th input { font-weight: normal; }
         
@@ -75,7 +72,7 @@
 
     <!-- 上部メニュー -->
     <div class="toolbar">
-        <h1 class="text-xl font-bold mr-4">横断面図v2.1 <span class="text-sm font-normal">(A4横)</span></h1>
+        <h1 class="text-xl font-bold mr-4">横断面図v2.2 <span class="text-sm font-normal">(A4横)</span></h1>
         <label>縮尺 1/</label>
         <input type="number" id="scale-input" value="100" class="w-20" onchange="updateScale()">
         
@@ -157,8 +154,8 @@
 
     <!-- 下部描画ツール -->
     <div class="toolbar">
-        <button class="btn active" id="mode-select" onclick="setMode('select')">選択/移動</button>
-        <!-- 範囲移動ボタンを追加 -->
+        <button class="btn active" id="mode-select" onclick="setMode('select')">選択/編集</button>
+        <button class="btn text-blue-300 border-blue-500 hover:bg-blue-700" id="mode-move-all" onclick="setMode('moveAll')">一括移動</button>
         <button class="btn text-blue-300 border-blue-500 hover:bg-blue-700" id="mode-move-range" onclick="setMode('moveRange')">範囲移動</button>
         <button class="btn hover:bg-red-500" id="mode-delete" onclick="setMode('delete')">個別消去</button>
         <span class="border-l border-gray-500 h-6 mx-1"></span>
@@ -174,14 +171,10 @@
         <label class="ml-2"><input type="radio" name="angle-constraint" value="free" checked onchange="updateConstraintMode()"> 自由</label>
         
         <label class="ml-4"><input type="radio" name="angle-constraint" value="slope" onchange="updateConstraintMode()"> 勾配:</label>
-        <select id="slope-select" onchange="updateSlope()" disabled class="ml-1 w-16">
-            <!-- JSで 1:0.1 ~ 1:2.0 を生成 -->
-        </select>
+        <select id="slope-select" onchange="updateSlope()" disabled class="ml-1 w-16"></select>
         
         <label class="ml-4"><input type="radio" name="angle-constraint" value="angle" onchange="updateConstraintMode()"> 角度:</label>
-        <select id="angle-select" onchange="updateAngle()" disabled class="ml-1 w-20">
-            <!-- JSで 1 ~ 89度 を生成 -->
-        </select>
+        <select id="angle-select" onchange="updateAngle()" disabled class="ml-1 w-20"></select>
         
         <label class="ml-4"><input type="checkbox" id="snap-toggle" checked> スナップ(端点)</label>
     </div>
@@ -227,16 +220,17 @@
         
         let selectedLineIndex = -1;
         
-        // 範囲移動用変数
+        // 移動用変数群
+        let isMovingAll = false;
         let isSelectingRange = false;
         let isMovingRange = false;
+        let moveStartPoint = null;
         let selectStartPoint = null;
         let selectEndPoint = null;
         let selectedLinesIndices = [];
         let selectedTextsIndices = [];
         let originalLinesState = [];
         let originalTextsState = [];
-        let moveStartPoint = null;
 
         // 勾配・角度制約用変数
         let constraintMode = 'free'; 
@@ -244,24 +238,18 @@
         let selectedAngle = 30;
 
         // --- 初期化処理 ---
-        // 勾配プルダウンの生成 (1:0.1 ~ 1:2.0)
         const slopeSelect = document.getElementById('slope-select');
         for(let i = 1; i <= 20; i++) {
             let val = (i / 10).toFixed(1);
             let opt = document.createElement('option');
-            opt.value = val;
-            opt.text = `1:${val}`;
-            slopeSelect.add(opt);
+            opt.value = val; opt.text = `1:${val}`; slopeSelect.add(opt);
         }
         slopeSelect.value = "0.6";
 
-        // 角度プルダウンの生成 (1 ~ 89)
         const angleSelect = document.getElementById('angle-select');
         for(let i = 1; i <= 89; i++) {
             let opt = document.createElement('option');
-            opt.value = i;
-            opt.text = `${i}度`;
-            angleSelect.add(opt);
+            opt.value = i; opt.text = `${i}度`; angleSelect.add(opt);
         }
         angleSelect.value = "30";
 
@@ -269,18 +257,10 @@
             constraintMode = document.querySelector('input[name="angle-constraint"]:checked').value;
             document.getElementById('slope-select').disabled = (constraintMode !== 'slope');
             document.getElementById('angle-select').disabled = (constraintMode !== 'angle');
-            updateSlope();
-            updateAngle();
+            updateSlope(); updateAngle();
         }
-        
-        function updateSlope() {
-            selectedSlope = parseFloat(document.getElementById('slope-select').value);
-        }
-        
-        function updateAngle() {
-            selectedAngle = parseFloat(document.getElementById('angle-select').value);
-        }
-        // --- 初期化処理 ここまで ---
+        function updateSlope() { selectedSlope = parseFloat(document.getElementById('slope-select').value); }
+        function updateAngle() { selectedAngle = parseFloat(document.getElementById('angle-select').value); }
 
         function saveState() {
             history.push(JSON.stringify({ lines, texts }));
@@ -290,10 +270,9 @@
         function undo() {
             if (history.length > 0) {
                 const state = JSON.parse(history.pop());
-                lines = state.lines;
-                texts = state.texts;
+                lines = state.lines; texts = state.texts;
                 selectedLineIndex = -1;
-                resetRangeSelection();
+                resetMoveStates();
                 hideLengthInput();
                 redrawAll();
                 infoBar.innerText = "1つ前の状態に戻しました";
@@ -304,12 +283,9 @@
 
         function resizeCanvases() {
             [gridCanvas, drawCanvas, uiCanvas].forEach(c => {
-                c.width = CANVAS_WIDTH;
-                c.height = CANVAS_HEIGHT;
+                c.width = CANVAS_WIDTH; c.height = CANVAS_HEIGHT;
             });
-            drawGrid();
-            redrawAll();
-            updateScaleBar();
+            drawGrid(); redrawAll(); updateScaleBar();
         }
         window.addEventListener('resize', resizeCanvases);
         resizeCanvases();
@@ -326,16 +302,14 @@
                 gridCtx.beginPath();
                 if (hoveredGuideV && Math.abs(hoveredGuideV.pos - x) < 1) {
                     gridCtx.strokeStyle = 'rgba(59, 130, 246, 0.8)';
-                    gridCtx.setLineDash([]);
                     gridCtx.lineWidth = 2;
                 } else {
                     gridCtx.strokeStyle = 'rgba(59, 130, 246, 0.2)';
                     gridCtx.setLineDash([10, 10]);
                     gridCtx.lineWidth = 1;
                 }
-                gridCtx.moveTo(x, 0);
-                gridCtx.lineTo(x, gridCanvas.height);
-                gridCtx.stroke();
+                gridCtx.moveTo(x, 0); gridCtx.lineTo(x, gridCanvas.height); gridCtx.stroke();
+                gridCtx.setLineDash([]);
             }
 
             for (let i = 1; i <= numH; i++) {
@@ -344,24 +318,22 @@
                 gridCtx.beginPath();
                 if (hoveredGuideH && Math.abs(hoveredGuideH.pos - y) < 1) {
                     gridCtx.strokeStyle = 'rgba(59, 130, 246, 0.8)';
-                    gridCtx.setLineDash([]);
                     gridCtx.lineWidth = 2;
                 } else {
                     gridCtx.strokeStyle = 'rgba(59, 130, 246, 0.2)';
                     gridCtx.setLineDash([10, 10]);
                     gridCtx.lineWidth = 1;
                 }
-                gridCtx.moveTo(0, y);
-                gridCtx.lineTo(gridCanvas.width, y);
-                gridCtx.stroke();
+                gridCtx.moveTo(0, y); gridCtx.lineTo(gridCanvas.width, y); gridCtx.stroke();
+                gridCtx.setLineDash([]);
             }
-            gridCtx.setLineDash([]);
         }
 
-        // 範囲選択状態のリセット
-        function resetRangeSelection() {
+        function resetMoveStates() {
+            isMovingAll = false;
             isSelectingRange = false;
             isMovingRange = false;
+            moveStartPoint = null;
             selectStartPoint = null;
             selectEndPoint = null;
             selectedLinesIndices = [];
@@ -377,10 +349,10 @@
             draggingTextIndex = -1;
             hoveredDeleteElement = null;
             selectedLineIndex = -1;
-            resetRangeSelection();
+            resetMoveStates();
             
             uiCtx.clearRect(0, 0, uiCanvas.width, uiCanvas.height);
-            container.style.cursor = (mode === 'delete' || mode === 'select' || mode === 'moveRange') ? 'default' : 'crosshair';
+            container.style.cursor = (mode === 'delete' || mode === 'select' || mode === 'moveRange' || mode === 'moveAll') ? 'default' : 'crosshair';
             hideLengthInput();
             redrawAll();
             
@@ -391,6 +363,7 @@
                 'area': '頂点を順番にクリックし、右クリックで面積計算結果を下部に表示',
                 'text': 'キャンバス上の配置したい場所をクリックしてテキストを挿入',
                 'select': 'テキストをドラッグで移動、または線分をクリックして長さを数値変更できます',
+                'moveAll': 'キャンバス上をドラッグして、すべての図形を一括で移動します',
                 'moveRange': 'ドラッグで矩形範囲を選択し、その後ドラッグで移動します（右クリックで選択解除）',
                 'delete': '消去したい線分やテキストをクリックしてください（赤くハイライトされます）'
             };
@@ -416,13 +389,9 @@
         function clearCanvas() {
             if(confirm('全ての描画を消去しますか？')) {
                 saveState();
-                lines = [];
-                texts = [];
-                areaPoints = [];
+                lines = []; texts = []; areaPoints = [];
                 selectedLineIndex = -1;
-                resetRangeSelection();
-                redrawAll();
-                hideLengthInput();
+                resetMoveStates(); redrawAll(); hideLengthInput();
             }
         }
 
@@ -430,33 +399,22 @@
             const rect = uiCanvas.getBoundingClientRect();
             const scaleX = uiCanvas.width / rect.width;
             const scaleY = uiCanvas.height / rect.height;
-            return {
-                x: (e.clientX - rect.left) * scaleX,
-                y: (e.clientY - rect.top) * scaleY
-            };
+            return { x: (e.clientX - rect.left) * scaleX, y: (e.clientY - rect.top) * scaleY };
         }
 
         function checkSnap(pos) {
             const snapDist = 20; 
-            let closest = null;
-            let minDist = snapDist;
-
+            let closest = null; let minDist = snapDist;
             if (document.getElementById('snap-toggle').checked) {
                 for (let line of lines) {
                     for (let pt of [line.start, line.end]) {
                         let d = Math.hypot(pt.x - pos.x, pt.y - pos.y);
-                        if (d < minDist) {
-                            minDist = d;
-                            closest = { x: pt.x, y: pt.y };
-                        }
+                        if (d < minDist) { minDist = d; closest = { x: pt.x, y: pt.y }; }
                     }
                 }
                 for (let pt of areaPoints) {
                     let d = Math.hypot(pt.x - pos.x, pt.y - pos.y);
-                    if (d < minDist) {
-                        minDist = d;
-                        closest = { x: pt.x, y: pt.y };
-                    }
+                    if (d < minDist) { minDist = d; closest = { x: pt.x, y: pt.y }; }
                 }
             }
             return closest;
@@ -465,46 +423,30 @@
         function applyConstraints(start, end, e) {
             let res = { x: end.x, y: end.y };
             if (e.shiftKey) {
-                const dx = Math.abs(end.x - start.x);
-                const dy = Math.abs(end.y - start.y);
-                if (dx > dy) {
-                    res.y = start.y;
-                } else {
-                    res.x = start.x;
-                }
+                const dx = Math.abs(end.x - start.x); const dy = Math.abs(end.y - start.y);
+                if (dx > dy) res.y = start.y; else res.x = start.x;
                 return res;
             }
-
             if (constraintMode === 'slope') {
-                const H = selectedSlope;
-                const dx = end.x - start.x;
-                const dy = end.y - start.y;
+                const H = selectedSlope; const dx = end.x - start.x; const dy = end.y - start.y;
                 const signX = dx >= 0 ? 1 : -1;
-                const newDx = Math.abs(dy) * H * signX;
-                res = { x: start.x + newDx, y: end.y };
+                res = { x: start.x + Math.abs(dy) * H * signX, y: end.y };
             } else if (constraintMode === 'angle') {
-                const rad = selectedAngle * Math.PI / 180;
-                const dx = end.x - start.x;
-                const dy = end.y - start.y;
+                const rad = selectedAngle * Math.PI / 180; const dx = end.x - start.x; const dy = end.y - start.y;
                 const signX = dx >= 0 ? 1 : -1;
-                // V = dy, H = V / tan(rad)
-                const newDx = Math.abs(dy) / Math.tan(rad) * signX;
-                res = { x: start.x + newDx, y: end.y };
+                res = { x: start.x + Math.abs(dy) / Math.tan(rad) * signX, y: end.y };
             }
             return res;
         }
 
         function hideLengthInput() {
             lengthInputContainer.style.display = 'none';
-            manualLengthInput.value = '';
-            manualLengthInput.blur();
+            manualLengthInput.value = ''; manualLengthInput.blur();
             if (currentMode === 'select' && selectedLineIndex !== -1) {
-                selectedLineIndex = -1;
-                redrawAll();
+                selectedLineIndex = -1; redrawAll();
             }
         }
 
-        // Enterキーで長さ確定 (選択した線を編集)
         manualLengthInput.addEventListener('keydown', function(e) {
             if (e.key === 'Enter') {
                 e.preventDefault();
@@ -512,29 +454,17 @@
                     const specifiedMeters = parseFloat(this.value);
                     if (!isNaN(specifiedMeters) && specifiedMeters > 0) {
                         saveState(); 
-                        
                         let line = lines[selectedLineIndex];
-                        const dx = line.end.x - line.start.x;
-                        const dy = line.end.y - line.start.y;
+                        const dx = line.end.x - line.start.x; const dy = line.end.y - line.start.y;
                         const angle = Math.atan2(dy, dx);
-                        
                         const specifiedPx = (specifiedMeters * 1000 / scale) * PIXELS_PER_MM;
-                        
-                        line.end = {
-                            x: line.start.x + Math.cos(angle) * specifiedPx,
-                            y: line.start.y + Math.sin(angle) * specifiedPx
-                        };
-                        
-                        selectedLineIndex = -1;
-                        hideLengthInput();
-                        redrawAll();
+                        line.end = { x: line.start.x + Math.cos(angle) * specifiedPx, y: line.start.y + Math.sin(angle) * specifiedPx };
+                        selectedLineIndex = -1; hideLengthInput(); redrawAll();
                         infoBar.innerText = `長さを ${specifiedMeters.toFixed(2)} m に変更しました`;
                     }
                 }
             }
-            if (e.key === 'Escape') {
-                hideLengthInput();
-            }
+            if (e.key === 'Escape') hideLengthInput();
         });
 
         function distToSegment(p, v, w) {
@@ -545,46 +475,42 @@
             return Math.hypot(p.x - (v.x + t * (w.x - v.x)), p.y - (v.y + t * (w.y - v.y)));
         }
 
-        // 矩形範囲内に点が含まれるか
         function isPointInRect(pt, rStart, rEnd) {
-            const minX = Math.min(rStart.x, rEnd.x);
-            const maxX = Math.max(rStart.x, rEnd.x);
-            const minY = Math.min(rStart.y, rEnd.y);
-            const maxY = Math.max(rStart.y, rEnd.y);
+            const minX = Math.min(rStart.x, rEnd.x); const maxX = Math.max(rStart.x, rEnd.x);
+            const minY = Math.min(rStart.y, rEnd.y); const maxY = Math.max(rStart.y, rEnd.y);
             return pt.x >= minX && pt.x <= maxX && pt.y >= minY && pt.y <= maxY;
         }
 
         uiCanvas.addEventListener('mousedown', (e) => {
-            if(e.target !== manualLengthInput && selectedLineIndex !== -1) {
-                hideLengthInput();
-            }
-            
+            if(e.target !== manualLengthInput && selectedLineIndex !== -1) hideLengthInput();
             const pos = getMousePos(e);
             
+            // --- 一括移動モード ---
+            if (currentMode === 'moveAll') {
+                saveState();
+                isMovingAll = true; moveStartPoint = pos;
+                originalLinesState = JSON.parse(JSON.stringify(lines));
+                originalTextsState = JSON.parse(JSON.stringify(texts));
+                container.style.cursor = 'grabbing';
+                return;
+            }
+
             // --- 範囲移動モード ---
             if (currentMode === 'moveRange') {
                 if (e.button === 2) {
-                    // 右クリックで選択解除
-                    resetRangeSelection();
-                    redrawAll();
+                    resetMoveStates(); redrawAll();
                     uiCtx.clearRect(0, 0, uiCanvas.width, uiCanvas.height);
                     infoBar.innerText = '選択を解除しました。ドラッグで矩形範囲を選択してください。';
                     return;
                 }
-                
                 if (selectedLinesIndices.length > 0 || selectedTextsIndices.length > 0) {
-                    // 既に選択済みなら移動を開始
                     saveState();
-                    isMovingRange = true;
-                    moveStartPoint = pos;
+                    isMovingRange = true; moveStartPoint = pos;
                     originalLinesState = JSON.parse(JSON.stringify(lines));
                     originalTextsState = JSON.parse(JSON.stringify(texts));
                     container.style.cursor = 'grabbing';
                 } else {
-                    // 未選択なら矩形選択を開始
-                    isSelectingRange = true;
-                    selectStartPoint = pos;
-                    selectEndPoint = pos;
+                    isSelectingRange = true; selectStartPoint = pos; selectEndPoint = pos;
                 }
                 return;
             }
@@ -593,13 +519,9 @@
             
             if (currentMode === 'delete' && hoveredDeleteElement) {
                 saveState();
-                if (hoveredDeleteElement.type === 'text') {
-                    texts.splice(hoveredDeleteElement.index, 1);
-                } else if (hoveredDeleteElement.type === 'line') {
-                    lines.splice(hoveredDeleteElement.index, 1);
-                }
-                hoveredDeleteElement = null;
-                redrawAll();
+                if (hoveredDeleteElement.type === 'text') texts.splice(hoveredDeleteElement.index, 1);
+                else if (hoveredDeleteElement.type === 'line') lines.splice(hoveredDeleteElement.index, 1);
+                hoveredDeleteElement = null; redrawAll();
                 uiCtx.clearRect(0, 0, uiCanvas.width, uiCanvas.height);
                 return; 
             }
@@ -613,99 +535,81 @@
                     let t = texts[i];
                     let width = drawCtx.measureText(t.text).width;
                     if (Math.abs(pos.x - t.x) <= width / 2 + 10 && Math.abs(pos.y - t.y) <= 12) {
-                        saveState();
-                        draggingTextIndex = i;
-                        dragOffsetX = pos.x - t.x;
-                        dragOffsetY = pos.y - t.y;
-                        textClicked = true;
-                        break;
+                        saveState(); draggingTextIndex = i; dragOffsetX = pos.x - t.x; dragOffsetY = pos.y - t.y; textClicked = true; break;
                     }
                 }
                 
                 if (!textClicked) {
-                    let clickedLineIndex = -1;
-                    let minDist = 15;
+                    let clickedLineIndex = -1; let minDist = 15;
                     for (let i = lines.length - 1; i >= 0; i--) {
                         let d = distToSegment(pos, lines[i].start, lines[i].end);
-                        if (d < minDist) {
-                            minDist = d;
-                            clickedLineIndex = i;
-                        }
+                        if (d < minDist) { minDist = d; clickedLineIndex = i; }
                     }
                     
                     if (clickedLineIndex !== -1) {
-                        selectedLineIndex = clickedLineIndex;
-                        let line = lines[selectedLineIndex];
+                        selectedLineIndex = clickedLineIndex; let line = lines[selectedLineIndex];
                         let distPx = Math.hypot(line.end.x - line.start.x, line.end.y - line.start.y);
                         let distM = (distPx / PIXELS_PER_MM) * (scale / 1000);
-                        
                         const rect = uiCanvas.getBoundingClientRect();
-                        const scaleX = rect.width / CANVAS_WIDTH;
-                        const scaleY = rect.height / CANVAS_HEIGHT;
-                        let midX = ((line.start.x + line.end.x) / 2) * scaleX;
-                        let midY = ((line.start.y + line.end.y) / 2) * scaleY;
+                        const scaleX = rect.width / CANVAS_WIDTH; const scaleY = rect.height / CANVAS_HEIGHT;
+                        let midX = ((line.start.x + line.end.x) / 2) * scaleX; let midY = ((line.start.y + line.end.y) / 2) * scaleY;
                         
                         lengthInputContainer.style.display = 'block';
-                        lengthInputContainer.style.left = midX + 'px';
-                        lengthInputContainer.style.top = midY + 'px';
+                        lengthInputContainer.style.left = midX + 'px'; lengthInputContainer.style.top = midY + 'px';
                         manualLengthInput.value = distM.toFixed(2);
-                        manualLengthInput.focus();
-                        manualLengthInput.select();
-                        redrawAll();
+                        manualLengthInput.focus(); manualLengthInput.select(); redrawAll();
                     } else {
-                        selectedLineIndex = -1;
-                        hideLengthInput();
-                        redrawAll();
+                        selectedLineIndex = -1; hideLengthInput(); redrawAll();
                     }
                 }
             } else if (currentMode === 'solid' || currentMode === 'dashed' || currentMode === 'measure') {
-                isDrawing = true;
-                startPoint = effectivePos;
+                isDrawing = true; startPoint = effectivePos;
             } else if (currentMode === 'text') {
                 const t = prompt('挿入するテキストを入力してください（寸法など）:');
-                if (t) {
-                    saveState();
-                    texts.push({ text: t, x: pos.x, y: pos.y });
-                    redrawAll();
-                }
+                if (t) { saveState(); texts.push({ text: t, x: pos.x, y: pos.y }); redrawAll(); }
             } else if (currentMode === 'area') {
-                areaPoints.push(effectivePos);
-                drawAreaPreview(pos);
+                areaPoints.push(effectivePos); drawAreaPreview(pos);
             }
         });
 
         uiCanvas.addEventListener('mousemove', (e) => {
             const pos = getMousePos(e);
             
+            // --- 一括移動モード ---
+            if (currentMode === 'moveAll') {
+                if (isMovingAll && moveStartPoint) {
+                    const dx = pos.x - moveStartPoint.x; const dy = pos.y - moveStartPoint.y;
+                    for (let i = 0; i < lines.length; i++) {
+                        lines[i].start.x = originalLinesState[i].start.x + dx; lines[i].start.y = originalLinesState[i].start.y + dy;
+                        lines[i].end.x = originalLinesState[i].end.x + dx; lines[i].end.y = originalLinesState[i].end.y + dy;
+                    }
+                    for (let i = 0; i < texts.length; i++) {
+                        texts[i].x = originalTextsState[i].x + dx; texts[i].y = originalTextsState[i].y + dy;
+                    }
+                    redrawAll();
+                } else {
+                    container.style.cursor = 'grab';
+                }
+                return;
+            }
+
             // --- 範囲移動モード ---
             if (currentMode === 'moveRange') {
                 if (isSelectingRange && selectStartPoint) {
                     selectEndPoint = pos;
                     uiCtx.clearRect(0, 0, uiCanvas.width, uiCanvas.height);
-                    // 選択矩形の描画
                     uiCtx.beginPath();
                     uiCtx.rect(selectStartPoint.x, selectStartPoint.y, selectEndPoint.x - selectStartPoint.x, selectEndPoint.y - selectStartPoint.y);
-                    uiCtx.fillStyle = 'rgba(59, 130, 246, 0.2)';
-                    uiCtx.fill();
-                    uiCtx.strokeStyle = '#3b82f6';
-                    uiCtx.setLineDash([5, 5]);
-                    uiCtx.lineWidth = 1;
-                    uiCtx.stroke();
-                    uiCtx.setLineDash([]);
+                    uiCtx.fillStyle = 'rgba(59, 130, 246, 0.2)'; uiCtx.fill();
+                    uiCtx.strokeStyle = '#3b82f6'; uiCtx.setLineDash([5, 5]); uiCtx.lineWidth = 1; uiCtx.stroke(); uiCtx.setLineDash([]);
                 } else if (isMovingRange && moveStartPoint) {
-                    const dx = pos.x - moveStartPoint.x;
-                    const dy = pos.y - moveStartPoint.y;
-                    
-                    // 選択された要素だけを移動
+                    const dx = pos.x - moveStartPoint.x; const dy = pos.y - moveStartPoint.y;
                     selectedLinesIndices.forEach(idx => {
-                        lines[idx].start.x = originalLinesState[idx].start.x + dx;
-                        lines[idx].start.y = originalLinesState[idx].start.y + dy;
-                        lines[idx].end.x = originalLinesState[idx].end.x + dx;
-                        lines[idx].end.y = originalLinesState[idx].end.y + dy;
+                        lines[idx].start.x = originalLinesState[idx].start.x + dx; lines[idx].start.y = originalLinesState[idx].start.y + dy;
+                        lines[idx].end.x = originalLinesState[idx].end.x + dx; lines[idx].end.y = originalLinesState[idx].end.y + dy;
                     });
                     selectedTextsIndices.forEach(idx => {
-                        texts[idx].x = originalTextsState[idx].x + dx;
-                        texts[idx].y = originalTextsState[idx].y + dy;
+                        texts[idx].x = originalTextsState[idx].x + dx; texts[idx].y = originalTextsState[idx].y + dy;
                     });
                     redrawAll();
                 } else if (selectedLinesIndices.length > 0 || selectedTextsIndices.length > 0) {
@@ -718,62 +622,38 @@
 
             snappedPoint = checkSnap(pos);
             const effectivePos = snappedPoint || pos;
-
             uiCtx.clearRect(0, 0, uiCanvas.width, uiCanvas.height);
 
-            let newHoveredGuideV = null;
-            let newHoveredGuideH = null;
-            let minGuideDistV = 15;
-            let minGuideDistH = 15;
+            let newHoveredGuideV = null; let newHoveredGuideH = null;
+            let minGuideDistV = 15; let minGuideDistH = 15;
 
             for (let g of guides) {
                 if (g.type === 'v') {
                     let d = Math.abs(pos.x - g.pos);
-                    if (d < minGuideDistV) {
-                        minGuideDistV = d;
-                        newHoveredGuideV = g;
-                    }
+                    if (d < minGuideDistV) { minGuideDistV = d; newHoveredGuideV = g; }
                 } else if (g.type === 'h') {
                     let d = Math.abs(pos.y - g.pos);
-                    if (d < minGuideDistH) {
-                        minGuideDistH = d;
-                        newHoveredGuideH = g;
-                    }
+                    if (d < minGuideDistH) { minGuideDistH = d; newHoveredGuideH = g; }
                 }
             }
             
             let isGuideChanged = false;
-            if (hoveredGuideV !== newHoveredGuideV || hoveredGuideH !== newHoveredGuideH) {
-                isGuideChanged = true;
-            }
-            
-            if (isGuideChanged) {
-                hoveredGuideV = newHoveredGuideV;
-                hoveredGuideH = newHoveredGuideH;
-                drawGrid();
-            }
+            if (hoveredGuideV !== newHoveredGuideV || hoveredGuideH !== newHoveredGuideH) isGuideChanged = true;
+            if (isGuideChanged) { hoveredGuideV = newHoveredGuideV; hoveredGuideH = newHoveredGuideH; drawGrid(); }
 
             if (currentMode === 'delete') {
-                hoveredDeleteElement = null;
-                let minDist = 15; 
-                
+                hoveredDeleteElement = null; let minDist = 15; 
                 drawCtx.font = "16px sans-serif";
                 for (let i = texts.length - 1; i >= 0; i--) {
-                    let t = texts[i];
-                    let width = drawCtx.measureText(t.text).width;
+                    let t = texts[i]; let width = drawCtx.measureText(t.text).width;
                     if (Math.abs(pos.x - t.x) <= width / 2 + 10 && Math.abs(pos.y - t.y) <= 12) {
-                        hoveredDeleteElement = { type: 'text', index: i };
-                        minDist = 0; 
-                        break;
+                        hoveredDeleteElement = { type: 'text', index: i }; minDist = 0; break;
                     }
                 }
                 if (!hoveredDeleteElement) {
                     for (let i = lines.length - 1; i >= 0; i--) {
                         let d = distToSegment(pos, lines[i].start, lines[i].end);
-                        if (d < minDist) {
-                            minDist = d;
-                            hoveredDeleteElement = { type: 'line', index: i };
-                        }
+                        if (d < minDist) { minDist = d; hoveredDeleteElement = { type: 'line', index: i }; }
                     }
                 }
                 
@@ -781,18 +661,12 @@
                     container.style.cursor = 'pointer';
                     if (hoveredDeleteElement.type === 'text') {
                         let t = texts[hoveredDeleteElement.index];
-                        uiCtx.font = "16px sans-serif";
-                        let w = uiCtx.measureText(t.text).width;
-                        uiCtx.fillStyle = 'rgba(239, 68, 68, 0.3)'; 
-                        uiCtx.fillRect(t.x - w/2 - 5, t.y - 12, w + 10, 24);
+                        uiCtx.font = "16px sans-serif"; let w = uiCtx.measureText(t.text).width;
+                        uiCtx.fillStyle = 'rgba(239, 68, 68, 0.3)'; uiCtx.fillRect(t.x - w/2 - 5, t.y - 12, w + 10, 24);
                     } else if (hoveredDeleteElement.type === 'line') {
                         let l = lines[hoveredDeleteElement.index];
-                        uiCtx.beginPath();
-                        uiCtx.moveTo(l.start.x, l.start.y);
-                        uiCtx.lineTo(l.end.x, l.end.y);
-                        uiCtx.strokeStyle = 'rgba(239, 68, 68, 0.5)'; 
-                        uiCtx.lineWidth = 6;
-                        uiCtx.stroke();
+                        uiCtx.beginPath(); uiCtx.moveTo(l.start.x, l.start.y); uiCtx.lineTo(l.end.x, l.end.y);
+                        uiCtx.strokeStyle = 'rgba(239, 68, 68, 0.5)'; uiCtx.lineWidth = 6; uiCtx.stroke();
                     }
                 } else {
                     container.style.cursor = (currentMode === 'delete') ? 'default' : 'crosshair';
@@ -801,25 +675,16 @@
 
             if (currentMode === 'select') {
                 if (draggingTextIndex !== -1) {
-                    texts[draggingTextIndex].x = pos.x - dragOffsetX;
-                    texts[draggingTextIndex].y = pos.y - dragOffsetY;
-                    redrawAll();
+                    texts[draggingTextIndex].x = pos.x - dragOffsetX; texts[draggingTextIndex].y = pos.y - dragOffsetY; redrawAll();
                 } else {
-                    let hovered = false;
-                    drawCtx.font = "16px sans-serif";
+                    let hovered = false; drawCtx.font = "16px sans-serif";
                     for (let t of texts) {
                         let width = drawCtx.measureText(t.text).width;
-                        if (Math.abs(pos.x - t.x) <= width / 2 + 10 && Math.abs(pos.y - t.y) <= 12) {
-                            hovered = true;
-                            break;
-                        }
+                        if (Math.abs(pos.x - t.x) <= width / 2 + 10 && Math.abs(pos.y - t.y) <= 12) { hovered = true; break; }
                     }
                     if (!hovered) {
                         for (let line of lines) {
-                            if (distToSegment(pos, line.start, line.end) < 15) {
-                                hovered = true;
-                                break;
-                            }
+                            if (distToSegment(pos, line.start, line.end) < 15) { hovered = true; break; }
                         }
                     }
                     container.style.cursor = hovered ? 'pointer' : 'default';
@@ -827,67 +692,34 @@
             }
 
             if (currentMode === 'text') {
-                uiCtx.beginPath();
-                uiCtx.moveTo(0, pos.y);
-                uiCtx.lineTo(uiCanvas.width, pos.y);
-                uiCtx.moveTo(pos.x, 0);
-                uiCtx.lineTo(pos.x, uiCanvas.height);
-                uiCtx.strokeStyle = 'rgba(59, 130, 246, 0.4)'; 
-                uiCtx.setLineDash([4, 4]);
-                uiCtx.lineWidth = 1;
-                uiCtx.stroke();
-                uiCtx.setLineDash([]);
-                
-                uiCtx.font = "12px sans-serif";
-                uiCtx.fillStyle = 'rgba(59, 130, 246, 0.8)';
-                uiCtx.textAlign = "left";
-                uiCtx.textBaseline = "bottom";
+                uiCtx.beginPath(); uiCtx.moveTo(0, pos.y); uiCtx.lineTo(uiCanvas.width, pos.y);
+                uiCtx.moveTo(pos.x, 0); uiCtx.lineTo(pos.x, uiCanvas.height);
+                uiCtx.strokeStyle = 'rgba(59, 130, 246, 0.4)'; uiCtx.setLineDash([4, 4]); uiCtx.lineWidth = 1; uiCtx.stroke(); uiCtx.setLineDash([]);
+                uiCtx.font = "12px sans-serif"; uiCtx.fillStyle = 'rgba(59, 130, 246, 0.8)'; uiCtx.textAlign = "left"; uiCtx.textBaseline = "bottom";
                 uiCtx.fillText("テキスト配置", pos.x + 5, pos.y - 5);
             }
 
             if (snappedPoint && (currentMode === 'solid' || currentMode === 'dashed' || currentMode === 'measure' || currentMode === 'area')) {
-                uiCtx.beginPath();
-                uiCtx.arc(snappedPoint.x, snappedPoint.y, 6, 0, Math.PI * 2);
-                uiCtx.fillStyle = 'rgba(0, 255, 0, 0.5)';
-                uiCtx.fill();
+                uiCtx.beginPath(); uiCtx.arc(snappedPoint.x, snappedPoint.y, 6, 0, Math.PI * 2);
+                uiCtx.fillStyle = 'rgba(0, 255, 0, 0.5)'; uiCtx.fill();
             }
 
             if (isDrawing && startPoint) {
                 let endPos = snappedPoint ? snappedPoint : applyConstraints(startPoint, effectivePos, e);
-                
                 const distPix = Math.hypot(endPos.x - startPoint.x, endPos.y - startPoint.y);
                 const distMeters = (distPix / PIXELS_PER_MM) * (scale / 1000);
-                const midX = (startPoint.x + endPos.x) / 2;
-                const midY = (startPoint.y + endPos.y) / 2;
+                const midX = (startPoint.x + endPos.x) / 2; const midY = (startPoint.y + endPos.y) / 2;
 
-                uiCtx.beginPath();
-                uiCtx.moveTo(startPoint.x, startPoint.y);
-                uiCtx.lineTo(endPos.x, endPos.y);
-                
+                uiCtx.beginPath(); uiCtx.moveTo(startPoint.x, startPoint.y); uiCtx.lineTo(endPos.x, endPos.y);
                 if (currentMode === 'measure') {
-                    uiCtx.setLineDash([5, 5]);
-                    uiCtx.strokeStyle = '#3b82f6'; 
-                    uiCtx.lineWidth = 1;
-                    infoBar.innerText = `距離: ${distMeters.toFixed(2)} m`;
-                    uiCtx.stroke();
-                    
-                    uiCtx.font = "14px sans-serif";
-                    uiCtx.fillStyle = "#3b82f6";
-                    uiCtx.textAlign = "center";
-                    uiCtx.textBaseline = "bottom";
+                    uiCtx.setLineDash([5, 5]); uiCtx.strokeStyle = '#3b82f6'; uiCtx.lineWidth = 1;
+                    infoBar.innerText = `距離: ${distMeters.toFixed(2)} m`; uiCtx.stroke();
+                    uiCtx.font = "14px sans-serif"; uiCtx.fillStyle = "#3b82f6"; uiCtx.textAlign = "center"; uiCtx.textBaseline = "bottom";
                     uiCtx.fillText(`${distMeters.toFixed(2)} m`, midX, midY - 5);
-
                 } else {
-                    uiCtx.setLineDash(currentMode === 'dashed' ? [10, 10] : []);
-                    uiCtx.strokeStyle = '#ef4444'; 
-                    uiCtx.lineWidth = 2;
-                    uiCtx.stroke();
-                    
+                    uiCtx.setLineDash(currentMode === 'dashed' ? [10, 10] : []); uiCtx.strokeStyle = '#ef4444'; uiCtx.lineWidth = 2; uiCtx.stroke();
                     if (distPix > 10) {
-                        uiCtx.font = "14px sans-serif";
-                        uiCtx.fillStyle = "#ef4444";
-                        uiCtx.textAlign = "center";
-                        uiCtx.textBaseline = "bottom";
+                        uiCtx.font = "14px sans-serif"; uiCtx.fillStyle = "#ef4444"; uiCtx.textAlign = "center"; uiCtx.textBaseline = "bottom";
                         uiCtx.fillText(`${distMeters.toFixed(2)} m`, midX, midY - 5);
                     }
                 }
@@ -899,48 +731,35 @@
         uiCanvas.addEventListener('mouseup', (e) => {
             if (e.button === 2) return;
             
+            if (currentMode === 'moveAll') {
+                isMovingAll = false; moveStartPoint = null; container.style.cursor = 'grab'; return;
+            }
+
             // --- 範囲移動モード ---
             if (currentMode === 'moveRange') {
                 if (isSelectingRange && selectStartPoint && selectEndPoint) {
-                    // 範囲内の要素を特定
-                    selectedLinesIndices = [];
-                    selectedTextsIndices = [];
-                    
+                    selectedLinesIndices = []; selectedTextsIndices = [];
                     lines.forEach((line, i) => {
-                        // 線分の始点と終点の両方が矩形範囲内にあるかチェック
-                        if (isPointInRect(line.start, selectStartPoint, selectEndPoint) && 
-                            isPointInRect(line.end, selectStartPoint, selectEndPoint)) {
+                        if (isPointInRect(line.start, selectStartPoint, selectEndPoint) && isPointInRect(line.end, selectStartPoint, selectEndPoint)) {
                             selectedLinesIndices.push(i);
                         }
                     });
-                    
                     texts.forEach((text, i) => {
-                        if (isPointInRect({x: text.x, y: text.y}, selectStartPoint, selectEndPoint)) {
-                            selectedTextsIndices.push(i);
-                        }
+                        if (isPointInRect({x: text.x, y: text.y}, selectStartPoint, selectEndPoint)) selectedTextsIndices.push(i);
                     });
-                    
-                    isSelectingRange = false;
-                    uiCtx.clearRect(0, 0, uiCanvas.width, uiCanvas.height);
-                    redrawAll();
-                    
+                    isSelectingRange = false; uiCtx.clearRect(0, 0, uiCanvas.width, uiCanvas.height); redrawAll();
                     if (selectedLinesIndices.length > 0 || selectedTextsIndices.length > 0) {
                         infoBar.innerText = `${selectedLinesIndices.length}本の線分と${selectedTextsIndices.length}個のテキストを選択しました。ドラッグで移動します。`;
                     } else {
                         infoBar.innerText = '選択範囲に図形がありません。再度ドラッグして選択してください。';
                     }
                 } else if (isMovingRange) {
-                    isMovingRange = false;
-                    moveStartPoint = null;
-                    container.style.cursor = 'grab';
+                    isMovingRange = false; moveStartPoint = null; container.style.cursor = 'grab';
                 }
                 return;
             }
 
-            if (currentMode === 'select' && draggingTextIndex !== -1) {
-                draggingTextIndex = -1;
-                return;
-            }
+            if (currentMode === 'select' && draggingTextIndex !== -1) { draggingTextIndex = -1; return; }
 
             if (isDrawing && startPoint) {
                 const pos = getMousePos(e);
@@ -953,24 +772,15 @@
                     infoBar.innerText = `距離: ${distMeters.toFixed(2)} m （計測完了）`;
                 } else {
                     if (Math.hypot(endPos.x - startPoint.x, endPos.y - startPoint.y) > 2) {
-                        saveState();
-                        lines.push({ start: startPoint, end: endPos, type: currentMode });
+                        saveState(); lines.push({ start: startPoint, end: endPos, type: currentMode });
                     }
                 }
-                
-                isDrawing = false;
-                startPoint = null;
-                redrawAll();
-                uiCtx.clearRect(0, 0, uiCanvas.width, uiCanvas.height);
+                isDrawing = false; startPoint = null; redrawAll(); uiCtx.clearRect(0, 0, uiCanvas.width, uiCanvas.height);
             }
         });
 
-        // 描画モードが切り替わったとき、右クリックイベントが競合しないように整理
         window.addEventListener('contextmenu', (e) => {
-            if (currentMode === 'moveRange') {
-                e.preventDefault();
-                // 処理はmousedown側に記述
-            }
+            if (currentMode === 'moveRange') e.preventDefault();
         });
 
         uiCanvas.addEventListener('contextmenu', (e) => {
@@ -983,15 +793,10 @@
                         areaPx += (areaPoints[i].x * areaPoints[j].y) - (areaPoints[j].x * areaPoints[i].y);
                     }
                     areaPx = Math.abs(areaPx) / 2.0;
-
                     const areaSqMm = areaPx / (PIXELS_PER_MM * PIXELS_PER_MM);
                     const areaSqMeters = areaSqMm * (scale / 1000) * (scale / 1000);
-                    
                     infoBar.innerText = `面積計測結果: ${areaSqMeters.toFixed(2)} m2 （テキスト挿入モードで図面に書き込めます）`;
-                    
-                    areaPoints = []; 
-                    redrawAll();
-                    uiCtx.clearRect(0, 0, uiCanvas.width, uiCanvas.height);
+                    areaPoints = []; redrawAll(); uiCtx.clearRect(0, 0, uiCanvas.width, uiCanvas.height);
                 } else {
                     infoBar.innerText = "面積を計算するには3点以上クリックしてください";
                 }
@@ -1000,215 +805,135 @@
 
         function drawAreaPreview(currentMousePos) {
             if(areaPoints.length === 0) return;
-            uiCtx.beginPath();
-            uiCtx.moveTo(areaPoints[0].x, areaPoints[0].y);
-            for(let i = 1; i < areaPoints.length; i++) {
-                uiCtx.lineTo(areaPoints[i].x, areaPoints[i].y);
-            }
-            uiCtx.lineTo(currentMousePos.x, currentMousePos.y);
-            uiCtx.lineTo(areaPoints[0].x, areaPoints[0].y);
-            uiCtx.fillStyle = 'rgba(59, 130, 246, 0.2)'; 
-            uiCtx.fill();
-            uiCtx.strokeStyle = '#3b82f6';
-            uiCtx.setLineDash([5, 5]);
-            uiCtx.stroke();
-            uiCtx.setLineDash([]);
+            uiCtx.beginPath(); uiCtx.moveTo(areaPoints[0].x, areaPoints[0].y);
+            for(let i = 1; i < areaPoints.length; i++) uiCtx.lineTo(areaPoints[i].x, areaPoints[i].y);
+            uiCtx.lineTo(currentMousePos.x, currentMousePos.y); uiCtx.lineTo(areaPoints[0].x, areaPoints[0].y);
+            uiCtx.fillStyle = 'rgba(59, 130, 246, 0.2)'; uiCtx.fill();
+            uiCtx.strokeStyle = '#3b82f6'; uiCtx.setLineDash([5, 5]); uiCtx.stroke(); uiCtx.setLineDash([]);
         }
 
         function redrawAll() {
             drawCtx.clearRect(0, 0, drawCanvas.width, drawCanvas.height);
-            
             lines.forEach((line, index) => {
-                drawCtx.beginPath();
-                drawCtx.moveTo(line.start.x, line.start.y);
-                drawCtx.lineTo(line.end.x, line.end.y);
+                drawCtx.beginPath(); drawCtx.moveTo(line.start.x, line.start.y); drawCtx.lineTo(line.end.x, line.end.y);
                 drawCtx.setLineDash(line.type === 'dashed' ? [10, 10] : []);
-                
-                // 単一選択または範囲選択中のハイライト
                 if (index === selectedLineIndex || selectedLinesIndices.includes(index)) {
-                    drawCtx.strokeStyle = '#3b82f6';
-                    drawCtx.lineWidth = 4;
+                    drawCtx.strokeStyle = '#3b82f6'; drawCtx.lineWidth = 4;
                 } else {
-                    drawCtx.strokeStyle = '#000000';
-                    drawCtx.lineWidth = 2;
+                    drawCtx.strokeStyle = '#000000'; drawCtx.lineWidth = 2;
                 }
                 drawCtx.stroke();
             });
-
-            drawCtx.font = "16px sans-serif";
-            drawCtx.textAlign = "center";
-            drawCtx.textBaseline = "middle";
+            drawCtx.font = "16px sans-serif"; drawCtx.textAlign = "center"; drawCtx.textBaseline = "middle";
             texts.forEach((t, index) => {
-                // 選択テキストのハイライト色変更
-                if (selectedTextsIndices.includes(index)) {
-                    drawCtx.fillStyle = '#3b82f6';
-                } else {
-                    drawCtx.fillStyle = '#000000';
-                }
+                drawCtx.fillStyle = selectedTextsIndices.includes(index) ? '#3b82f6' : '#000000';
                 drawCtx.fillText(t.text, t.x, t.y);
             });
         }
 
-        // --- 表題の保存と読込 ---
         function exportLegend() {
             const inputs = document.querySelectorAll('#legend-box input[type="text"]');
             const data = Array.from(inputs).map(inp => inp.value);
             const blob = new Blob([JSON.stringify(data)], { type: 'application/json' });
-            const link = document.createElement('a');
-            link.href = URL.createObjectURL(blob);
-            link.download = 'legend_data.json';
-            link.click();
+            const link = document.createElement('a'); link.href = URL.createObjectURL(blob); link.download = 'legend_data.json'; link.click();
         }
 
         function importLegend(event) {
-            const file = event.target.files[0];
-            if (!file) return;
+            const file = event.target.files[0]; if (!file) return;
             const reader = new FileReader();
             reader.onload = function(e) {
                 try {
                     const data = JSON.parse(e.target.result);
                     const inputs = document.querySelectorAll('#legend-box input[type="text"]');
-                    inputs.forEach((inp, idx) => {
-                        if(data[idx] !== undefined) inp.value = data[idx];
-                    });
-                } catch(err) {
-                    alert("ファイルの読み込みに失敗しました。正しいJSONファイルを選択してください。");
-                }
-                document.getElementById('legend-import').value = ""; // リセット
+                    inputs.forEach((inp, idx) => { if(data[idx] !== undefined) inp.value = data[idx]; });
+                } catch(err) { alert("ファイルの読み込みに失敗しました。正しいJSONファイルを選択してください。"); }
+                document.getElementById('legend-import').value = "";
             };
             reader.readAsText(file);
         }
 
         window.jsPDF = window.jspdf.jsPDF;
         async function exportPDF() {
-            uiCtx.clearRect(0, 0, uiCanvas.width, uiCanvas.height);
-            gridCtx.clearRect(0, 0, gridCanvas.width, gridCanvas.height); 
-            selectedLineIndex = -1; 
-            resetRangeSelection();
-            hideLengthInput();
-            redrawAll();
+            uiCtx.clearRect(0, 0, uiCanvas.width, uiCanvas.height); gridCtx.clearRect(0, 0, gridCanvas.width, gridCanvas.height); 
+            selectedLineIndex = -1; resetMoveStates(); hideLengthInput(); redrawAll();
             
             const inputs = document.querySelectorAll('#legend-box input[type="text"]');
             const replacements = [];
             inputs.forEach(input => {
-                const parent = input.parentNode;
-                const val = input.value;
-                replacements.push({parent: parent, input: input});
-                
-                // html2canvasできれいに描画されるよう、一時的に親要素の中身をテキストspanに置き換え
+                const parent = input.parentNode; const val = input.value; replacements.push({parent: parent, input: input});
                 parent.innerHTML = `<span style="display:block; font-size:12px; text-align:center; width:100%; padding:2px 0;">${val}</span>`;
             });
-
             const canvasEl = document.getElementById('canvas-container');
             const canvas = await html2canvas(canvasEl, { scale: 2 });
-            
-            // 元に戻す
-            replacements.forEach(r => {
-                r.parent.innerHTML = '';
-                r.parent.appendChild(r.input);
-            });
-
+            replacements.forEach(r => { r.parent.innerHTML = ''; r.parent.appendChild(r.input); });
             drawGrid(); 
-
             const imgData = canvas.toDataURL('image/png');
             const pdf = new jsPDF({ orientation: 'landscape', format: 'a4' });
-            pdf.addImage(imgData, 'PNG', 0, 0, 297, 210);
-            pdf.save('横断面図.pdf');
+            pdf.addImage(imgData, 'PNG', 0, 0, 297, 210); pdf.save('横断面図.pdf');
         }
 
         function exportDXF() {
             let dxf = `0\nSECTION\n2\nENTITIES\n`;
-            
-            // ピクセルからDXF用のミリメートルへ変換（スケール反映）
+            // ピクセルからDXF(mm単位・縮尺反映済)へ変換
             const div = PIXELS_PER_MM; 
-            const multiplier = 1000 / scale; // 縮尺調整分を追加
             
             lines.forEach(line => {
-                const x1 = (line.start.x / div) * multiplier;
-                const y1 = (-line.start.y / div) * multiplier;
-                const x2 = (line.end.x / div) * multiplier;
-                const y2 = (-line.end.y / div) * multiplier;
+                const x1 = line.start.x / div; const y1 = -line.start.y / div;
+                const x2 = line.end.x / div; const y2 = -line.end.y / div;
                 const lineType = line.type === 'dashed' ? 'DASHED' : 'CONTINUOUS';
                 dxf += `0\nLINE\n8\n0\n6\n${lineType}\n10\n${x1}\n20\n${y1}\n30\n0.0\n11\n${x2}\n21\n${y2}\n31\n0.0\n`;
             });
             texts.forEach(t => {
-                const tx = (t.x / div) * multiplier;
-                const ty = (-t.y / div) * multiplier;
-                const textHeight = 2.0 * (100 / scale);
-                dxf += `0\nTEXT\n8\n0\n10\n${tx}\n20\n${ty}\n40\n${textHeight}\n1\n${t.text}\n`; 
+                const tx = t.x / div; const ty = -t.y / div;
+                dxf += `0\nTEXT\n8\n0\n10\n${tx}\n20\n${ty}\n40\n4\n1\n${t.text}\n`; 
             });
             dxf += `0\nENDSEC\n0\nEOF\n`;
             
             const blob = new Blob([dxf], { type: 'text/plain' });
-            const link = document.createElement('a');
-            link.href = URL.createObjectURL(blob);
-            link.download = '横断面図.dxf';
-            link.click();
+            const link = document.createElement('a'); link.href = URL.createObjectURL(blob); link.download = '横断面図.dxf'; link.click();
         }
 
         function importDXF(event) {
-            const file = event.target.files[0];
-            if (!file) return;
-            
-            // DXF読込時の縮尺設定（画面上部の入力欄から取得）
-            const scale = parseFloat(document.getElementById('scale-input').value) || 100;
-            // CADで出力されたDXF(mm単位)を、キャンバスのピクセルに正しく戻すための除数
-            const divisor = 1000 / scale;
+            const file = event.target.files[0]; if (!file) return;
+            // 読み込み時：DXF内のmmの数値を、そのままピクセルに変換するだけ
+            const multiplier = PIXELS_PER_MM;
             
             const reader = new FileReader();
             reader.onload = function(e) {
-                const text = e.target.result;
-                const linesArr = text.split(/\r?\n/);
-                let currentEntity = null;
-                
-                saveState();
+                const text = e.target.result; const linesArr = text.split(/\r?\n/);
+                let currentEntity = null; saveState();
 
                 for(let i=0; i<linesArr.length; i+=2) {
-                    const code = linesArr[i].trim();
-                    const value = linesArr[i+1] ? linesArr[i+1].trim() : '';
-                    
+                    const code = linesArr[i].trim(); const value = linesArr[i+1] ? linesArr[i+1].trim() : '';
                     if (code === '0') {
                         if (currentEntity) {
-                            if (currentEntity.type === 'text' && currentEntity.text) {
-                                texts.push({ text: currentEntity.text, x: currentEntity.x, y: currentEntity.y });
-                            } else if (currentEntity.start && currentEntity.start.x !== undefined && currentEntity.end.x !== undefined) {
-                                lines.push(currentEntity);
-                            }
+                            if (currentEntity.type === 'text' && currentEntity.text) texts.push({ text: currentEntity.text, x: currentEntity.x, y: currentEntity.y });
+                            else if (currentEntity.start && currentEntity.start.x !== undefined && currentEntity.end.x !== undefined) lines.push(currentEntity);
                             currentEntity = null;
                         }
-                        
-                        if (value === 'LINE') {
-                            currentEntity = { start:{}, end:{}, type: 'solid' };
-                        } else if (value === 'TEXT') {
-                            currentEntity = { type: 'text' };
-                        }
+                        if (value === 'LINE') currentEntity = { start:{}, end:{}, type: 'solid' };
+                        else if (value === 'TEXT') currentEntity = { type: 'text' };
                     } else if (currentEntity) {
                         if (currentEntity.type === 'text') {
-                            // DXF座標(mm) / divisor でメートルに戻し、PIXELS_PER_MM でピクセル化
-                            if (code === '10') currentEntity.x = (parseFloat(value) / divisor) * PIXELS_PER_MM;
-                            if (code === '20') currentEntity.y = -(parseFloat(value) / divisor) * PIXELS_PER_MM; // Y軸反転を戻す
+                            if (code === '10') currentEntity.x = parseFloat(value) * multiplier;
+                            if (code === '20') currentEntity.y = -parseFloat(value) * multiplier;
                             if (code === '1') currentEntity.text = value;
                         } else {
-                            if (code === '10') currentEntity.start.x = (parseFloat(value) / divisor) * PIXELS_PER_MM;
-                            if (code === '20') currentEntity.start.y = -(parseFloat(value) / divisor) * PIXELS_PER_MM;
-                            if (code === '11') currentEntity.end.x = (parseFloat(value) / divisor) * PIXELS_PER_MM;
-                            if (code === '21') currentEntity.end.y = -(parseFloat(value) / divisor) * PIXELS_PER_MM;
+                            if (code === '10') currentEntity.start.x = parseFloat(value) * multiplier;
+                            if (code === '20') currentEntity.start.y = -parseFloat(value) * multiplier;
+                            if (code === '11') currentEntity.end.x = parseFloat(value) * multiplier;
+                            if (code === '21') currentEntity.end.y = -parseFloat(value) * multiplier;
                             if (code === '6' && value.includes('DASH')) currentEntity.type = 'dashed';
                         }
                     }
                 }
-                redrawAll();
-                document.getElementById('dxf-import').value = "";
-                
-                setTimeout(() => alert("DXFの読み込みが完了しました。\nツールバーの「範囲移動」ボタンを使い、図形をドラッグで囲んでから好きな位置に移動させてください。"), 500);
+                redrawAll(); document.getElementById('dxf-import').value = "";
+                setTimeout(() => alert("DXFの読み込みが完了しました。\nツールバーの「一括移動」または「範囲移動」ボタンを使って好きな位置に移動させてください。"), 500);
             };
             reader.readAsText(file);
         }
         
-        // 起動時初期化
-        updateConstraintMode(); // ラジオボタンの状態を適用
-        drawGrid();
-        updateScaleBar();
+        updateConstraintMode(); drawGrid(); updateScaleBar();
     </script>
 </body>
 </html>
