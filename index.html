@@ -8,13 +8,12 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
     
+    <!-- GA4 Script -->
     <script async src="https://www.googletagmanager.com/gtag/js?id=G-WXBP6CPKLP"></script>
     <script>
       window.dataLayer = window.dataLayer || [];
       function gtag(){dataLayer.push(arguments);}
       gtag('js', new Date());
-
-      // 測定ID
       gtag('config', 'G-WXBP6CPKLP');
     </script>
     
@@ -75,7 +74,7 @@
 
     <!-- 上部メニュー -->
     <div class="toolbar">
-        <h1 class="text-xl font-bold mr-4">横断面図v1.8 <span class="text-sm font-normal">(A4横)</span></h1>
+        <h1 class="text-xl font-bold mr-4">横断面図v1.9 <span class="text-sm font-normal">(A4横)</span></h1>
         <label>縮尺 1/</label>
         <input type="number" id="scale-input" value="100" class="w-20" onchange="updateScale()">
         
@@ -158,6 +157,7 @@
     <!-- 下部描画ツール -->
     <div class="toolbar">
         <button class="btn active" id="mode-select" onclick="setMode('select')">選択/移動</button>
+        <button class="btn text-blue-300 border-blue-500 hover:bg-blue-700" id="mode-move-all" onclick="setMode('moveAll')">図形一括移動</button>
         <button class="btn hover:bg-red-500" id="mode-delete" onclick="setMode('delete')">個別消去</button>
         <span class="border-l border-gray-500 h-6 mx-1"></span>
         <button class="btn" id="mode-solid" onclick="setMode('solid')">実線</button>
@@ -224,6 +224,12 @@
         let hoveredDeleteElement = null; 
         
         let selectedLineIndex = -1;
+        
+        // 図形一括移動用変数
+        let isMovingAll = false;
+        let moveAllStartPoint = null;
+        let originalLines = [];
+        let originalTexts = [];
 
         // 勾配・角度制約用変数
         let constraintMode = 'free'; 
@@ -353,8 +359,9 @@
             draggingTextIndex = -1;
             hoveredDeleteElement = null;
             selectedLineIndex = -1;
+            isMovingAll = false;
             uiCtx.clearRect(0, 0, uiCanvas.width, uiCanvas.height);
-            container.style.cursor = (mode === 'delete' || mode === 'select') ? 'default' : 'crosshair';
+            container.style.cursor = (mode === 'delete' || mode === 'select' || mode === 'moveAll') ? 'default' : 'crosshair';
             hideLengthInput();
             redrawAll();
             
@@ -365,6 +372,7 @@
                 'area': '頂点を順番にクリックし、右クリックで面積計算結果を下部に表示',
                 'text': 'キャンバス上の配置したい場所をクリックしてテキストを挿入',
                 'select': 'テキストをドラッグで移動、または線分をクリックして長さを数値変更できます',
+                'moveAll': 'キャンバス上をドラッグして、描画されている全ての線分とテキストを一括で移動します',
                 'delete': '消去したい線分やテキストをクリックしてください（赤くハイライトされます）'
             };
             infoBar.innerText = msgs[mode] || "";
@@ -525,6 +533,18 @@
             if (e.button === 2) return; 
             const pos = getMousePos(e);
             
+            // --- 図形一括移動モード ---
+            if (currentMode === 'moveAll') {
+                saveState();
+                isMovingAll = true;
+                moveAllStartPoint = pos;
+                // 移動前の元の座標をディープコピーして保持
+                originalLines = JSON.parse(JSON.stringify(lines));
+                originalTexts = JSON.parse(JSON.stringify(texts));
+                container.style.cursor = 'grabbing';
+                return;
+            }
+            
             if (currentMode === 'delete' && hoveredDeleteElement) {
                 saveState();
                 if (hoveredDeleteElement.type === 'text') {
@@ -610,6 +630,31 @@
 
         uiCanvas.addEventListener('mousemove', (e) => {
             const pos = getMousePos(e);
+            
+            // --- 図形一括移動モード ---
+            if (currentMode === 'moveAll') {
+                if (isMovingAll && moveAllStartPoint) {
+                    const dx = pos.x - moveAllStartPoint.x;
+                    const dy = pos.y - moveAllStartPoint.y;
+                    
+                    // 元の座標から相対的に移動させる
+                    for (let i = 0; i < lines.length; i++) {
+                        lines[i].start.x = originalLines[i].start.x + dx;
+                        lines[i].start.y = originalLines[i].start.y + dy;
+                        lines[i].end.x = originalLines[i].end.x + dx;
+                        lines[i].end.y = originalLines[i].end.y + dy;
+                    }
+                    for (let i = 0; i < texts.length; i++) {
+                        texts[i].x = originalTexts[i].x + dx;
+                        texts[i].y = originalTexts[i].y + dy;
+                    }
+                    redrawAll();
+                } else {
+                    container.style.cursor = 'grab';
+                }
+                return;
+            }
+
             snappedPoint = checkSnap(pos);
             const effectivePos = snappedPoint || pos;
 
@@ -792,6 +837,13 @@
 
         uiCanvas.addEventListener('mouseup', (e) => {
             if (e.button === 2) return;
+            
+            if (currentMode === 'moveAll') {
+                isMovingAll = false;
+                moveAllStartPoint = null;
+                container.style.cursor = 'grab';
+                return;
+            }
 
             if (currentMode === 'select' && draggingTextIndex !== -1) {
                 draggingTextIndex = -1;
@@ -978,6 +1030,13 @@
         function importDXF(event) {
             const file = event.target.files[0];
             if (!file) return;
+            
+            // DXF読込時の縮尺設定（画面上部の入力欄から取得）
+            const scale = parseFloat(document.getElementById('scale-input').value) || 100;
+            // CADで 1m = 1000mm として縮尺スケール(1/100等)で出力されたDXFを、
+            // 再び元のメートル（画面上のピクセル換算用）に戻すための除数
+            const divisor = 1000 / scale;
+            
             const reader = new FileReader();
             reader.onload = function(e) {
                 const text = e.target.result;
@@ -1007,14 +1066,14 @@
                         }
                     } else if (currentEntity) {
                         if (currentEntity.type === 'text') {
-                            if (code === '10') currentEntity.x = parseFloat(value);
-                            if (code === '20') currentEntity.y = -parseFloat(value);
+                            if (code === '10') currentEntity.x = parseFloat(value) / divisor;
+                            if (code === '20') currentEntity.y = -parseFloat(value) / divisor; // Y軸反転を戻す
                             if (code === '1') currentEntity.text = value;
                         } else {
-                            if (code === '10') currentEntity.start.x = parseFloat(value);
-                            if (code === '20') currentEntity.start.y = -parseFloat(value);
-                            if (code === '11') currentEntity.end.x = parseFloat(value);
-                            if (code === '21') currentEntity.end.y = -parseFloat(value);
+                            if (code === '10') currentEntity.start.x = parseFloat(value) / divisor;
+                            if (code === '20') currentEntity.start.y = -parseFloat(value) / divisor;
+                            if (code === '11') currentEntity.end.x = parseFloat(value) / divisor;
+                            if (code === '21') currentEntity.end.y = -parseFloat(value) / divisor;
                             if (code === '6' && value.includes('DASH')) currentEntity.type = 'dashed';
                         }
                     }
