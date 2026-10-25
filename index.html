@@ -75,7 +75,7 @@
 
     <!-- 上部メニュー -->
     <div class="toolbar">
-        <h1 class="text-xl font-bold mr-4">横断面図v2.0 <span class="text-sm font-normal">(A4横)</span></h1>
+        <h1 class="text-xl font-bold mr-4">横断面図v2.1 <span class="text-sm font-normal">(A4横)</span></h1>
         <label>縮尺 1/</label>
         <input type="number" id="scale-input" value="100" class="w-20" onchange="updateScale()">
         
@@ -158,7 +158,8 @@
     <!-- 下部描画ツール -->
     <div class="toolbar">
         <button class="btn active" id="mode-select" onclick="setMode('select')">選択/移動</button>
-        <button class="btn text-blue-300 border-blue-500 hover:bg-blue-700" id="mode-move-all" onclick="setMode('moveAll')">図形一括移動</button>
+        <!-- 範囲移動ボタンを追加 -->
+        <button class="btn text-blue-300 border-blue-500 hover:bg-blue-700" id="mode-move-range" onclick="setMode('moveRange')">範囲移動</button>
         <button class="btn hover:bg-red-500" id="mode-delete" onclick="setMode('delete')">個別消去</button>
         <span class="border-l border-gray-500 h-6 mx-1"></span>
         <button class="btn" id="mode-solid" onclick="setMode('solid')">実線</button>
@@ -226,11 +227,16 @@
         
         let selectedLineIndex = -1;
         
-        // 図形一括移動用変数
-        let isMovingAll = false;
-        let moveAllStartPoint = null;
-        let originalLines = [];
-        let originalTexts = [];
+        // 範囲移動用変数
+        let isSelectingRange = false;
+        let isMovingRange = false;
+        let selectStartPoint = null;
+        let selectEndPoint = null;
+        let selectedLinesIndices = [];
+        let selectedTextsIndices = [];
+        let originalLinesState = [];
+        let originalTextsState = [];
+        let moveStartPoint = null;
 
         // 勾配・角度制約用変数
         let constraintMode = 'free'; 
@@ -287,6 +293,7 @@
                 lines = state.lines;
                 texts = state.texts;
                 selectedLineIndex = -1;
+                resetRangeSelection();
                 hideLengthInput();
                 redrawAll();
                 infoBar.innerText = "1つ前の状態に戻しました";
@@ -351,6 +358,16 @@
             gridCtx.setLineDash([]);
         }
 
+        // 範囲選択状態のリセット
+        function resetRangeSelection() {
+            isSelectingRange = false;
+            isMovingRange = false;
+            selectStartPoint = null;
+            selectEndPoint = null;
+            selectedLinesIndices = [];
+            selectedTextsIndices = [];
+        }
+
         function setMode(mode) {
             currentMode = mode;
             document.querySelectorAll('.toolbar .btn').forEach(b => b.classList.remove('active'));
@@ -360,9 +377,10 @@
             draggingTextIndex = -1;
             hoveredDeleteElement = null;
             selectedLineIndex = -1;
-            isMovingAll = false;
+            resetRangeSelection();
+            
             uiCtx.clearRect(0, 0, uiCanvas.width, uiCanvas.height);
-            container.style.cursor = (mode === 'delete' || mode === 'select' || mode === 'moveAll') ? 'default' : 'crosshair';
+            container.style.cursor = (mode === 'delete' || mode === 'select' || mode === 'moveRange') ? 'default' : 'crosshair';
             hideLengthInput();
             redrawAll();
             
@@ -373,7 +391,7 @@
                 'area': '頂点を順番にクリックし、右クリックで面積計算結果を下部に表示',
                 'text': 'キャンバス上の配置したい場所をクリックしてテキストを挿入',
                 'select': 'テキストをドラッグで移動、または線分をクリックして長さを数値変更できます',
-                'moveAll': 'キャンバス上をドラッグして、描画されている全ての線分とテキストを一括で移動します',
+                'moveRange': 'ドラッグで矩形範囲を選択し、その後ドラッグで移動します（右クリックで選択解除）',
                 'delete': '消去したい線分やテキストをクリックしてください（赤くハイライトされます）'
             };
             infoBar.innerText = msgs[mode] || "";
@@ -402,6 +420,7 @@
                 texts = [];
                 areaPoints = [];
                 selectedLineIndex = -1;
+                resetRangeSelection();
                 redrawAll();
                 hideLengthInput();
             }
@@ -526,25 +545,51 @@
             return Math.hypot(p.x - (v.x + t * (w.x - v.x)), p.y - (v.y + t * (w.y - v.y)));
         }
 
+        // 矩形範囲内に点が含まれるか
+        function isPointInRect(pt, rStart, rEnd) {
+            const minX = Math.min(rStart.x, rEnd.x);
+            const maxX = Math.max(rStart.x, rEnd.x);
+            const minY = Math.min(rStart.y, rEnd.y);
+            const maxY = Math.max(rStart.y, rEnd.y);
+            return pt.x >= minX && pt.x <= maxX && pt.y >= minY && pt.y <= maxY;
+        }
+
         uiCanvas.addEventListener('mousedown', (e) => {
             if(e.target !== manualLengthInput && selectedLineIndex !== -1) {
                 hideLengthInput();
             }
-
-            if (e.button === 2) return; 
+            
             const pos = getMousePos(e);
             
-            // --- 図形一括移動モード ---
-            if (currentMode === 'moveAll') {
-                saveState();
-                isMovingAll = true;
-                moveAllStartPoint = pos;
-                // 移動前の元の座標をディープコピーして保持
-                originalLines = JSON.parse(JSON.stringify(lines));
-                originalTexts = JSON.parse(JSON.stringify(texts));
-                container.style.cursor = 'grabbing';
+            // --- 範囲移動モード ---
+            if (currentMode === 'moveRange') {
+                if (e.button === 2) {
+                    // 右クリックで選択解除
+                    resetRangeSelection();
+                    redrawAll();
+                    uiCtx.clearRect(0, 0, uiCanvas.width, uiCanvas.height);
+                    infoBar.innerText = '選択を解除しました。ドラッグで矩形範囲を選択してください。';
+                    return;
+                }
+                
+                if (selectedLinesIndices.length > 0 || selectedTextsIndices.length > 0) {
+                    // 既に選択済みなら移動を開始
+                    saveState();
+                    isMovingRange = true;
+                    moveStartPoint = pos;
+                    originalLinesState = JSON.parse(JSON.stringify(lines));
+                    originalTextsState = JSON.parse(JSON.stringify(texts));
+                    container.style.cursor = 'grabbing';
+                } else {
+                    // 未選択なら矩形選択を開始
+                    isSelectingRange = true;
+                    selectStartPoint = pos;
+                    selectEndPoint = pos;
+                }
                 return;
             }
+
+            if (e.button === 2) return; 
             
             if (currentMode === 'delete' && hoveredDeleteElement) {
                 saveState();
@@ -632,26 +677,41 @@
         uiCanvas.addEventListener('mousemove', (e) => {
             const pos = getMousePos(e);
             
-            // --- 図形一括移動モード ---
-            if (currentMode === 'moveAll') {
-                if (isMovingAll && moveAllStartPoint) {
-                    const dx = pos.x - moveAllStartPoint.x;
-                    const dy = pos.y - moveAllStartPoint.y;
+            // --- 範囲移動モード ---
+            if (currentMode === 'moveRange') {
+                if (isSelectingRange && selectStartPoint) {
+                    selectEndPoint = pos;
+                    uiCtx.clearRect(0, 0, uiCanvas.width, uiCanvas.height);
+                    // 選択矩形の描画
+                    uiCtx.beginPath();
+                    uiCtx.rect(selectStartPoint.x, selectStartPoint.y, selectEndPoint.x - selectStartPoint.x, selectEndPoint.y - selectStartPoint.y);
+                    uiCtx.fillStyle = 'rgba(59, 130, 246, 0.2)';
+                    uiCtx.fill();
+                    uiCtx.strokeStyle = '#3b82f6';
+                    uiCtx.setLineDash([5, 5]);
+                    uiCtx.lineWidth = 1;
+                    uiCtx.stroke();
+                    uiCtx.setLineDash([]);
+                } else if (isMovingRange && moveStartPoint) {
+                    const dx = pos.x - moveStartPoint.x;
+                    const dy = pos.y - moveStartPoint.y;
                     
-                    // 元の座標から相対的に移動させる
-                    for (let i = 0; i < lines.length; i++) {
-                        lines[i].start.x = originalLines[i].start.x + dx;
-                        lines[i].start.y = originalLines[i].start.y + dy;
-                        lines[i].end.x = originalLines[i].end.x + dx;
-                        lines[i].end.y = originalLines[i].end.y + dy;
-                    }
-                    for (let i = 0; i < texts.length; i++) {
-                        texts[i].x = originalTexts[i].x + dx;
-                        texts[i].y = originalTexts[i].y + dy;
-                    }
+                    // 選択された要素だけを移動
+                    selectedLinesIndices.forEach(idx => {
+                        lines[idx].start.x = originalLinesState[idx].start.x + dx;
+                        lines[idx].start.y = originalLinesState[idx].start.y + dy;
+                        lines[idx].end.x = originalLinesState[idx].end.x + dx;
+                        lines[idx].end.y = originalLinesState[idx].end.y + dy;
+                    });
+                    selectedTextsIndices.forEach(idx => {
+                        texts[idx].x = originalTextsState[idx].x + dx;
+                        texts[idx].y = originalTextsState[idx].y + dy;
+                    });
                     redrawAll();
-                } else {
+                } else if (selectedLinesIndices.length > 0 || selectedTextsIndices.length > 0) {
                     container.style.cursor = 'grab';
+                } else {
+                    container.style.cursor = 'crosshair';
                 }
                 return;
             }
@@ -839,10 +899,41 @@
         uiCanvas.addEventListener('mouseup', (e) => {
             if (e.button === 2) return;
             
-            if (currentMode === 'moveAll') {
-                isMovingAll = false;
-                moveAllStartPoint = null;
-                container.style.cursor = 'grab';
+            // --- 範囲移動モード ---
+            if (currentMode === 'moveRange') {
+                if (isSelectingRange && selectStartPoint && selectEndPoint) {
+                    // 範囲内の要素を特定
+                    selectedLinesIndices = [];
+                    selectedTextsIndices = [];
+                    
+                    lines.forEach((line, i) => {
+                        // 線分の始点と終点の両方が矩形範囲内にあるかチェック
+                        if (isPointInRect(line.start, selectStartPoint, selectEndPoint) && 
+                            isPointInRect(line.end, selectStartPoint, selectEndPoint)) {
+                            selectedLinesIndices.push(i);
+                        }
+                    });
+                    
+                    texts.forEach((text, i) => {
+                        if (isPointInRect({x: text.x, y: text.y}, selectStartPoint, selectEndPoint)) {
+                            selectedTextsIndices.push(i);
+                        }
+                    });
+                    
+                    isSelectingRange = false;
+                    uiCtx.clearRect(0, 0, uiCanvas.width, uiCanvas.height);
+                    redrawAll();
+                    
+                    if (selectedLinesIndices.length > 0 || selectedTextsIndices.length > 0) {
+                        infoBar.innerText = `${selectedLinesIndices.length}本の線分と${selectedTextsIndices.length}個のテキストを選択しました。ドラッグで移動します。`;
+                    } else {
+                        infoBar.innerText = '選択範囲に図形がありません。再度ドラッグして選択してください。';
+                    }
+                } else if (isMovingRange) {
+                    isMovingRange = false;
+                    moveStartPoint = null;
+                    container.style.cursor = 'grab';
+                }
                 return;
             }
 
@@ -874,26 +965,36 @@
             }
         });
 
-        uiCanvas.addEventListener('contextmenu', (e) => {
-            e.preventDefault();
-            if (currentMode === 'area' && areaPoints.length >= 3) {
-                let areaPx = 0;
-                for(let i = 0; i < areaPoints.length; i++) {
-                    let j = (i + 1) % areaPoints.length;
-                    areaPx += (areaPoints[i].x * areaPoints[j].y) - (areaPoints[j].x * areaPoints[i].y);
-                }
-                areaPx = Math.abs(areaPx) / 2.0;
+        // 描画モードが切り替わったとき、右クリックイベントが競合しないように整理
+        window.addEventListener('contextmenu', (e) => {
+            if (currentMode === 'moveRange') {
+                e.preventDefault();
+                // 処理はmousedown側に記述
+            }
+        });
 
-                const areaSqMm = areaPx / (PIXELS_PER_MM * PIXELS_PER_MM);
-                const areaSqMeters = areaSqMm * (scale / 1000) * (scale / 1000);
-                
-                infoBar.innerText = `面積計測結果: ${areaSqMeters.toFixed(2)} m2 （テキスト挿入モードで図面に書き込めます）`;
-                
-                areaPoints = []; 
-                redrawAll();
-                uiCtx.clearRect(0, 0, uiCanvas.width, uiCanvas.height);
-            } else if (currentMode === 'area') {
-                infoBar.innerText = "面積を計算するには3点以上クリックしてください";
+        uiCanvas.addEventListener('contextmenu', (e) => {
+            if (currentMode === 'area') {
+                e.preventDefault();
+                if (areaPoints.length >= 3) {
+                    let areaPx = 0;
+                    for(let i = 0; i < areaPoints.length; i++) {
+                        let j = (i + 1) % areaPoints.length;
+                        areaPx += (areaPoints[i].x * areaPoints[j].y) - (areaPoints[j].x * areaPoints[i].y);
+                    }
+                    areaPx = Math.abs(areaPx) / 2.0;
+
+                    const areaSqMm = areaPx / (PIXELS_PER_MM * PIXELS_PER_MM);
+                    const areaSqMeters = areaSqMm * (scale / 1000) * (scale / 1000);
+                    
+                    infoBar.innerText = `面積計測結果: ${areaSqMeters.toFixed(2)} m2 （テキスト挿入モードで図面に書き込めます）`;
+                    
+                    areaPoints = []; 
+                    redrawAll();
+                    uiCtx.clearRect(0, 0, uiCanvas.width, uiCanvas.height);
+                } else {
+                    infoBar.innerText = "面積を計算するには3点以上クリックしてください";
+                }
             }
         });
 
@@ -923,7 +1024,8 @@
                 drawCtx.lineTo(line.end.x, line.end.y);
                 drawCtx.setLineDash(line.type === 'dashed' ? [10, 10] : []);
                 
-                if (index === selectedLineIndex) {
+                // 単一選択または範囲選択中のハイライト
+                if (index === selectedLineIndex || selectedLinesIndices.includes(index)) {
                     drawCtx.strokeStyle = '#3b82f6';
                     drawCtx.lineWidth = 4;
                 } else {
@@ -934,10 +1036,15 @@
             });
 
             drawCtx.font = "16px sans-serif";
-            drawCtx.fillStyle = "#000000";
             drawCtx.textAlign = "center";
             drawCtx.textBaseline = "middle";
-            texts.forEach(t => {
+            texts.forEach((t, index) => {
+                // 選択テキストのハイライト色変更
+                if (selectedTextsIndices.includes(index)) {
+                    drawCtx.fillStyle = '#3b82f6';
+                } else {
+                    drawCtx.fillStyle = '#000000';
+                }
                 drawCtx.fillText(t.text, t.x, t.y);
             });
         }
@@ -977,6 +1084,7 @@
             uiCtx.clearRect(0, 0, uiCanvas.width, uiCanvas.height);
             gridCtx.clearRect(0, 0, gridCanvas.width, gridCanvas.height); 
             selectedLineIndex = -1; 
+            resetRangeSelection();
             hideLengthInput();
             redrawAll();
             
@@ -1013,19 +1121,21 @@
             
             // ピクセルからDXF用のミリメートルへ変換（スケール反映）
             const div = PIXELS_PER_MM; 
+            const multiplier = 1000 / scale; // 縮尺調整分を追加
             
             lines.forEach(line => {
-                const x1 = line.start.x / div;
-                const y1 = -line.start.y / div;
-                const x2 = line.end.x / div;
-                const y2 = -line.end.y / div;
+                const x1 = (line.start.x / div) * multiplier;
+                const y1 = (-line.start.y / div) * multiplier;
+                const x2 = (line.end.x / div) * multiplier;
+                const y2 = (-line.end.y / div) * multiplier;
                 const lineType = line.type === 'dashed' ? 'DASHED' : 'CONTINUOUS';
                 dxf += `0\nLINE\n8\n0\n6\n${lineType}\n10\n${x1}\n20\n${y1}\n30\n0.0\n11\n${x2}\n21\n${y2}\n31\n0.0\n`;
             });
             texts.forEach(t => {
-                const tx = t.x / div;
-                const ty = -t.y / div;
-                dxf += `0\nTEXT\n8\n0\n10\n${tx}\n20\n${ty}\n40\n4\n1\n${t.text}\n`; // 文字高さ(mm)
+                const tx = (t.x / div) * multiplier;
+                const ty = (-t.y / div) * multiplier;
+                const textHeight = 2.0 * (100 / scale);
+                dxf += `0\nTEXT\n8\n0\n10\n${tx}\n20\n${ty}\n40\n${textHeight}\n1\n${t.text}\n`; 
             });
             dxf += `0\nENDSEC\n0\nEOF\n`;
             
@@ -1040,8 +1150,10 @@
             const file = event.target.files[0];
             if (!file) return;
             
-            // DXF(mm)を画面のピクセルに戻すための乗数
-            const multiplier = PIXELS_PER_MM;
+            // DXF読込時の縮尺設定（画面上部の入力欄から取得）
+            const scale = parseFloat(document.getElementById('scale-input').value) || 100;
+            // CADで出力されたDXF(mm単位)を、キャンバスのピクセルに正しく戻すための除数
+            const divisor = 1000 / scale;
             
             const reader = new FileReader();
             reader.onload = function(e) {
@@ -1072,14 +1184,15 @@
                         }
                     } else if (currentEntity) {
                         if (currentEntity.type === 'text') {
-                            if (code === '10') currentEntity.x = parseFloat(value) * multiplier;
-                            if (code === '20') currentEntity.y = -parseFloat(value) * multiplier; // DXFのマイナスYを戻す
+                            // DXF座標(mm) / divisor でメートルに戻し、PIXELS_PER_MM でピクセル化
+                            if (code === '10') currentEntity.x = (parseFloat(value) / divisor) * PIXELS_PER_MM;
+                            if (code === '20') currentEntity.y = -(parseFloat(value) / divisor) * PIXELS_PER_MM; // Y軸反転を戻す
                             if (code === '1') currentEntity.text = value;
                         } else {
-                            if (code === '10') currentEntity.start.x = parseFloat(value) * multiplier;
-                            if (code === '20') currentEntity.start.y = -parseFloat(value) * multiplier;
-                            if (code === '11') currentEntity.end.x = parseFloat(value) * multiplier;
-                            if (code === '21') currentEntity.end.y = -parseFloat(value) * multiplier;
+                            if (code === '10') currentEntity.start.x = (parseFloat(value) / divisor) * PIXELS_PER_MM;
+                            if (code === '20') currentEntity.start.y = -(parseFloat(value) / divisor) * PIXELS_PER_MM;
+                            if (code === '11') currentEntity.end.x = (parseFloat(value) / divisor) * PIXELS_PER_MM;
+                            if (code === '21') currentEntity.end.y = -(parseFloat(value) / divisor) * PIXELS_PER_MM;
                             if (code === '6' && value.includes('DASH')) currentEntity.type = 'dashed';
                         }
                     }
@@ -1087,8 +1200,7 @@
                 redrawAll();
                 document.getElementById('dxf-import').value = "";
                 
-                // 一括移動ボタンを使うようアナウンス
-                setTimeout(() => alert("DXFの読み込みが完了しました。\n左上に図形が偏っている場合は、ツールバーの「図形一括移動」ボタンを押して画面中央にドラッグしてください。"), 500);
+                setTimeout(() => alert("DXFの読み込みが完了しました。\nツールバーの「範囲移動」ボタンを使い、図形をドラッグで囲んでから好きな位置に移動させてください。"), 500);
             };
             reader.readAsText(file);
         }
