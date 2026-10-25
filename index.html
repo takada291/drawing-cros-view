@@ -8,12 +8,13 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
     
-    <!-- GA4 Script -->
     <script async src="https://www.googletagmanager.com/gtag/js?id=G-WXBP6CPKLP"></script>
     <script>
       window.dataLayer = window.dataLayer || [];
       function gtag(){dataLayer.push(arguments);}
       gtag('js', new Date());
+
+      // 測定ID
       gtag('config', 'G-WXBP6CPKLP');
     </script>
     
@@ -74,7 +75,7 @@
 
     <!-- 上部メニュー -->
     <div class="toolbar">
-        <h1 class="text-xl font-bold mr-4">横断面図v1.9 <span class="text-sm font-normal">(A4横)</span></h1>
+        <h1 class="text-xl font-bold mr-4">横断面図v2.0 <span class="text-sm font-normal">(A4横)</span></h1>
         <label>縮尺 1/</label>
         <input type="number" id="scale-input" value="100" class="w-20" onchange="updateScale()">
         
@@ -1009,14 +1010,22 @@
 
         function exportDXF() {
             let dxf = `0\nSECTION\n2\nENTITIES\n`;
+            
+            // ピクセルからDXF用のミリメートルへ変換（スケール反映）
+            const div = PIXELS_PER_MM; 
+            
             lines.forEach(line => {
-                const y1 = -line.start.y;
-                const y2 = -line.end.y;
+                const x1 = line.start.x / div;
+                const y1 = -line.start.y / div;
+                const x2 = line.end.x / div;
+                const y2 = -line.end.y / div;
                 const lineType = line.type === 'dashed' ? 'DASHED' : 'CONTINUOUS';
-                dxf += `0\nLINE\n8\n0\n6\n${lineType}\n10\n${line.start.x}\n20\n${y1}\n30\n0.0\n11\n${line.end.x}\n21\n${y2}\n31\n0.0\n`;
+                dxf += `0\nLINE\n8\n0\n6\n${lineType}\n10\n${x1}\n20\n${y1}\n30\n0.0\n11\n${x2}\n21\n${y2}\n31\n0.0\n`;
             });
             texts.forEach(t => {
-                dxf += `0\nTEXT\n8\n0\n10\n${t.x}\n20\n${-t.y}\n40\n14\n1\n${t.text}\n`;
+                const tx = t.x / div;
+                const ty = -t.y / div;
+                dxf += `0\nTEXT\n8\n0\n10\n${tx}\n20\n${ty}\n40\n4\n1\n${t.text}\n`; // 文字高さ(mm)
             });
             dxf += `0\nENDSEC\n0\nEOF\n`;
             
@@ -1031,11 +1040,8 @@
             const file = event.target.files[0];
             if (!file) return;
             
-            // DXF読込時の縮尺設定（画面上部の入力欄から取得）
-            const scale = parseFloat(document.getElementById('scale-input').value) || 100;
-            // CADで 1m = 1000mm として縮尺スケール(1/100等)で出力されたDXFを、
-            // 再び元のメートル（画面上のピクセル換算用）に戻すための除数
-            const divisor = 1000 / scale;
+            // DXF(mm)を画面のピクセルに戻すための乗数
+            const multiplier = PIXELS_PER_MM;
             
             const reader = new FileReader();
             reader.onload = function(e) {
@@ -1066,20 +1072,23 @@
                         }
                     } else if (currentEntity) {
                         if (currentEntity.type === 'text') {
-                            if (code === '10') currentEntity.x = parseFloat(value) / divisor;
-                            if (code === '20') currentEntity.y = -parseFloat(value) / divisor; // Y軸反転を戻す
+                            if (code === '10') currentEntity.x = parseFloat(value) * multiplier;
+                            if (code === '20') currentEntity.y = -parseFloat(value) * multiplier; // DXFのマイナスYを戻す
                             if (code === '1') currentEntity.text = value;
                         } else {
-                            if (code === '10') currentEntity.start.x = parseFloat(value) / divisor;
-                            if (code === '20') currentEntity.start.y = -parseFloat(value) / divisor;
-                            if (code === '11') currentEntity.end.x = parseFloat(value) / divisor;
-                            if (code === '21') currentEntity.end.y = -parseFloat(value) / divisor;
+                            if (code === '10') currentEntity.start.x = parseFloat(value) * multiplier;
+                            if (code === '20') currentEntity.start.y = -parseFloat(value) * multiplier;
+                            if (code === '11') currentEntity.end.x = parseFloat(value) * multiplier;
+                            if (code === '21') currentEntity.end.y = -parseFloat(value) * multiplier;
                             if (code === '6' && value.includes('DASH')) currentEntity.type = 'dashed';
                         }
                     }
                 }
                 redrawAll();
                 document.getElementById('dxf-import').value = "";
+                
+                // 一括移動ボタンを使うようアナウンス
+                setTimeout(() => alert("DXFの読み込みが完了しました。\n左上に図形が偏っている場合は、ツールバーの「図形一括移動」ボタンを押して画面中央にドラッグしてください。"), 500);
             };
             reader.readAsText(file);
         }
